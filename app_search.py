@@ -40,9 +40,19 @@ def load_data():
     return df
 
 def normalize_search_input(phone_input):
+    # 1. משאיר רק ספרות (מעיף +, -, רווחים)
+    # דוגמה: "+972 54-123" הופך ל- "97254123"
     clean_digits = ''.join(filter(str.isdigit, str(phone_input)))
+    
+    # 2. אם המספר מתחיל ב-972, נחתוך את הקידומת הזו
+    if clean_digits.startswith('972'):
+        clean_digits = clean_digits[3:]
+        
+    # 3. אם יש 0 בהתחלה (למשל הזינו 054...), נוריד אותו
+    # כדי שיתאים לפורמט בשיטס (54...)
     if clean_digits.startswith('0'):
         return clean_digits[1:]
+        
     return clean_digits
 
 # --- עיצוב CSS (RTL) ---
@@ -75,7 +85,6 @@ except Exception as e:
 col_search, col_radio = st.columns([3, 1])
 
 with col_radio:
-    # הוספתי כאן את האפשרות השלישית
     search_type = st.radio("חפש לפי:", ("טלפון", "מספר הזמנה", "מספר משלוח"), horizontal=True)
 
 with col_search:
@@ -85,7 +94,7 @@ with col_search:
 if search_query:
     filtered_df = pd.DataFrame()
     
-    # 1. חיפוש לפי טלפון
+    # 1. חיפוש לפי טלפון (עם הלוגיקה החדשה ל-972)
     if search_type == "טלפון":
         search_val = normalize_search_input(search_query)
         if df.shape[1] > 7: # עמודה H
@@ -99,10 +108,10 @@ if search_query:
             mask = df.iloc[:, 0].astype(str) == search_val
             filtered_df = df[mask].copy()
 
-    # 3. חיפוש לפי מספר משלוח (חדש)
+    # 3. חיפוש לפי מספר משלוח
     else: 
         search_val = search_query.strip()
-        if df.shape[1] > 8: # עמודה I (אינדקס 8)
+        if df.shape[1] > 8: # עמודה I
             mask = df.iloc[:, 8].astype(str) == search_val
             filtered_df = df[mask].copy()
 
