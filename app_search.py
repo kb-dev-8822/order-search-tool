@@ -10,21 +10,6 @@ st.set_page_config(layout="wide", page_title="איתור הזמנות", page_ico
 SPREADSHEET_ID = '1xUABIGIhnLxO2PYrpAOXZdk48Q-hNYOHkht2vUyaVdE'
 WORKSHEET_NAME = "הזמנות"
 
-# --- JS להעתקה ללוח (חובה כדי שהכפתור יעבוד) ---
-clipboard_script = """
-<script>
-    function copyRowToClipboard(text) {
-        navigator.clipboard.writeText(text).then(function() {
-            console.log('Copied to clipboard');
-        }, function(err) {
-            console.error('Could not copy text: ', err);
-        });
-    }
-</script>
-"""
-# מזריק את הסקריפט לדף בצורה נסתרת
-st.components.v1.html(clipboard_script, height=0, width=0)
-
 # -------------------------------------------
 
 @st.cache_data
@@ -66,6 +51,7 @@ def normalize_phone(phone_input):
 
 def clean_input_garbage(val):
     if not isinstance(val, str): val = str(val)
+    # ניקוי תווים נסתרים שיכולים להרוס חיפוש
     garbage_chars = ['\u200f', '\u200e', '\u202a', '\u202b', '\u202c', '\u202d', '\u202e', '\u00a0', '\t', '\n', '\r']
     cleaned_val = val
     for char in garbage_chars:
@@ -78,57 +64,10 @@ st.markdown("""
     .stApp { direction: rtl; }
     .stMarkdown, h1, h3, h2, p, label, .stRadio { text-align: right !important; direction: rtl !important; }
     .stTextInput input { direction: rtl; text-align: right; }
-    
-    /* עיצוב הטבלה */
-    .custom-table {
-        width: 100%;
-        border-collapse: collapse;
-        margin-top: 20px;
-        direction: rtl;
-        font-size: 0.95em;
-        font-family: sans-serif;
-    }
-    .custom-table th {
-        background-color: #262730;
-        color: white;
-        padding: 12px;
-        text-align: right;
-        border-bottom: 2px solid #555;
-    }
-    .custom-table td {
-        padding: 10px;
-        border-bottom: 1px solid #444;
-        text-align: right;
-        color: #ddd;
-        vertical-align: middle;
-    }
-    .custom-table tr:hover {
-        background-color: #363945;
-    }
-    
-    /* כפתור העתקה משופר */
-    .copy-btn {
-        background-color: #4CAF50;
-        border: none;
-        color: white;
-        padding: 6px 12px;
-        text-align: center;
-        text-decoration: none;
-        display: inline-block;
-        font-size: 13px;
-        font-weight: bold;
-        border-radius: 4px;
-        cursor: pointer;
-        transition: 0.2s;
-    }
-    .copy-btn:hover {
-        background-color: #45a049;
-        transform: scale(1.05);
-    }
-    .copy-btn:active {
-        transform: scale(0.95);
-    }
-
+    div[data-testid="stDataFrame"] th { text-align: right !important; direction: rtl !important; }
+    div[data-testid="stDataFrame"] td { text-align: right !important; direction: rtl !important; }
+    div[class*="stDataFrame"] div[role="columnheader"] { justify-content: flex-end; }
+    div[class*="stDataFrame"] div[role="gridcell"] { text-align: right; direction: rtl; justify-content: flex-end; }
     code { direction: rtl; white-space: pre-wrap !important; text-align: right; }
     div[role="radiogroup"] { direction: rtl; text-align: right; justify-content: flex-end; }
 </style>
@@ -178,49 +117,31 @@ if search_query:
     if not filtered_df.empty:
         st.write(f"### נמצאו {len(filtered_df)} הזמנות:")
         
-        # מיון לפי תאריך (לצורך סידור, גם אם לא מציגים אותו)
         if df.shape[1] > 9:
             try:
                 filtered_df['temp_date'] = pd.to_datetime(filtered_df.iloc[:, 9], dayfirst=True, errors='coerce')
                 filtered_df = filtered_df.sort_values(by='temp_date', ascending=True)
             except: pass
 
-        # --- בניית הטבלה ---
-        # בניית הכותרות (ללא תאריך)
-        # שים לב: הכל בשורה אחת או צמוד לשמאל כדי למנוע זיהוי כקוד
-        html_table = """
-        <table class="custom-table">
-            <thead>
-                <tr>
-                    <th style="width: 100px;">פעולה</th>
-                    <th>מספר הזמנה</th>
-                    <th>שם לקוח</th>
-                    <th>טלפון</th>
-                    <th>כתובת מלאה</th>
-                    <th>מוצר</th>
-                    <th>כמות</th>
-                    <th>סטטוס משלוח</th>
-                </tr>
-            </thead>
-            <tbody>
-        """
-
-        copy_texts = []
+        # הכנת הנתונים לתצוגה ולהעתקה
+        excel_copy_lines = []
+        full_text_copy_lines = []
+        
+        # יצירת דאטה-פריים ייעודי לתצוגה נקייה בטבלה
+        display_rows = []
 
         for index, row in filtered_df.iterrows():
             try:
-                # נתונים
+                # חילוץ נתונים
                 order_num = str(row.iloc[0]).strip()
                 qty = str(row.iloc[1]).strip()
                 sku = str(row.iloc[2]).strip()
                 full_name = str(row.iloc[3]).strip()
                 
-                # כתובת מפורקת להעתקה
                 street = str(row.iloc[4]).strip() if pd.notna(row.iloc[4]) else ""
                 house = str(row.iloc[5]).strip() if pd.notna(row.iloc[5]) else ""
                 city = str(row.iloc[6]).strip() if pd.notna(row.iloc[6]) else ""
                 
-                # כתובת לתצוגה
                 address_display = f"{street} {house} {city}".strip()
                 
                 phone_raw = row.iloc[7]
@@ -230,45 +151,54 @@ if search_query:
                 tracking = row.iloc[8]
                 if pd.isna(tracking) or str(tracking).strip() == "": tracking = "התקנה"
                 
-                date_val = str(row.iloc[9]).strip() # שומרים בצד לטקסט למטה
+                date_val = str(row.iloc[9]).strip()
 
+                # שם פרטי (מילה ראשונה)
                 first_name = full_name.split()[0] if full_name else ""
 
-                # סטרינג להעתקה לאקסל (טאבים)
-                excel_string = f"{order_num}\t{qty}\t{first_name}\t{street}\t{house}\t{city}\t{phone_display}"
-                excel_string_safe = excel_string.replace("'", "").replace('"', '')
+                # 1. שורה לתצוגה בטבלה הגרפית
+                display_rows.append({
+                    "מספר הזמנה": order_num,
+                    "שם לקוח": full_name,
+                    "טלפון": phone_display,
+                    "כתובת מלאה": address_display,
+                    "מוצר": sku,
+                    "כמות": qty,
+                    "סטטוס משלוח": tracking,
+                    "תאריך": date_val
+                })
 
-                # בניית השורה ב-HTML (חשוב! ללא הזחות מיותרות)
-                row_html = f"""
-                <tr>
-                    <td><button class="copy-btn" onclick="copyRowToClipboard('{excel_string_safe}')">העתק 📋</button></td>
-                    <td>{order_num}</td>
-                    <td>{full_name}</td>
-                    <td>{phone_display}</td>
-                    <td>{address_display}</td>
-                    <td>{sku}</td>
-                    <td>{qty}</td>
-                    <td>{tracking}</td>
-                </tr>"""
-                
-                html_table += row_html
+                # 2. שורה להעתקה לאקסל (מופרדת בטאבים)
+                # סדר: הזמנה, כמות, שם פרטי, רחוב, בית, עיר, טלפון
+                # ה-\t אומר למחשב "תעבור לתא הבא באקסל"
+                excel_line = f"{order_num}\t{qty}\t{first_name}\t{street}\t{house}\t{city}\t{phone_display}"
+                excel_copy_lines.append(excel_line)
 
-                # טקסט לבלוק התחתון
-                formatted_text = (f"פרטי הזמנה: מספר הזמנה: {order_num}, כמות: {qty}, מק\"ט: {sku}, "
-                                  f"שם: {full_name}, כתובת: {address_display}, טלפון: {phone_display}, "
-                                  f"מספר משלוח: {tracking}, תאריך: {date_val}")
-                copy_texts.append(formatted_text)
-                
+                # 3. שורה להעתקת טקסט מלא (הפורמט הישן והטוב)
+                text_line = (f"פרטי הזמנה: מספר הזמנה: {order_num}, כמות: {qty}, מק\"ט: {sku}, "
+                             f"שם: {full_name}, כתובת: {address_display}, טלפון: {phone_display}, "
+                             f"מספר משלוח: {tracking}, תאריך: {date_val}")
+                full_text_copy_lines.append(text_line)
+
             except IndexError: continue
 
-        html_table += "</tbody></table>"
-        
-        # הזרקת הסקריפט והטבלה
-        st.markdown(clipboard_script, unsafe_allow_html=True)
-        st.markdown(html_table, unsafe_allow_html=True)
+        # --- הצגת הטבלה הנקייה (כמו פעם) ---
+        st.dataframe(
+            pd.DataFrame(display_rows),
+            use_container_width=True,
+            hide_index=True
+        )
 
-        st.markdown("### 📋 העתקה מהירה (טקסט מלא)")
-        st.code("\n".join(copy_texts), language=None)
+        # --- אזור העתקה לאקסל ---
+        st.info("👇 העתק מכאן והדבק באקסל (זה יתפצל לבד לעמודות)")
+        # חיבור כל השורות (אם יש כמה תוצאות) לבלוק אחד
+        excel_string_final = "\n".join(excel_copy_lines)
+        st.code(excel_string_final, language="csv") 
+        # הערה: זה נראה כמו טקסט פשוט, אבל כשתעתיק לאקסל זה יסתדר בול.
+
+        # --- אזור העתקה טקסט מלא (למייל/וואטסאפ) ---
+        with st.expander("העתקת פרטים מלאים (למייל/וואטסאפ)"):
+            st.code("\n".join(full_text_copy_lines), language=None)
         
     else:
         st.warning(f"לא נמצאו הזמנות עבור {search_type}: {clean_query}")
