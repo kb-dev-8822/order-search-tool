@@ -122,6 +122,7 @@ if search_query:
                 filtered_df = filtered_df.sort_values(by='temp_date', ascending=True)
             except: pass
 
+        # רשימות שיחזיקו את הנתונים המוכנים
         excel_copy_lines = []
         full_text_copy_lines = []
         display_rows = []
@@ -148,7 +149,6 @@ if search_query:
                 if pd.isna(tracking) or str(tracking).strip() == "": tracking = "התקנה"
                 
                 date_val = str(row.iloc[9]).strip()
-
                 first_name = full_name.split()[0] if full_name else ""
 
                 # 1. שורה לתצוגה בטבלה
@@ -163,12 +163,11 @@ if search_query:
                     "תאריך": date_val
                 })
 
-                # 2. שורה להעתקה לאקסל (טאבים)
-                # סדר מעודכן: הזמנה -> כמות -> מק"ט -> שם פרטי -> רחוב -> בית -> עיר -> טלפון
+                # 2. שורה לאקסל (הזמנה -> כמות -> מק"ט -> שם פרטי -> רחוב -> בית -> עיר -> טלפון)
                 excel_line = f"{order_num}\t{qty}\t{sku}\t{first_name}\t{street}\t{house}\t{city}\t{phone_display}"
                 excel_copy_lines.append(excel_line)
 
-                # 3. שורה להעתקת טקסט מלא
+                # 3. שורה לטקסט מלא
                 text_line = (f"פרטי הזמנה: מספר הזמנה: {order_num}, כמות: {qty}, מק\"ט: {sku}, "
                              f"שם: {full_name}, כתובת: {address_display}, טלפון: {phone_display}, "
                              f"מספר משלוח: {tracking}, תאריך: {date_val}")
@@ -176,21 +175,37 @@ if search_query:
 
             except IndexError: continue
 
-        # --- הצגת הטבלה ---
-        st.dataframe(
+        # --- הצגת הטבלה עם בחירה (Selection) ---
+        st.info("💡 טיפ: סמן ב-V את השורות שברצונך להעתיק. אם לא תסמן, כל השורות יועתקו.")
+        
+        # שימוש ב-event כדי ללכוד את הבחירה
+        event = st.dataframe(
             pd.DataFrame(display_rows),
             use_container_width=True,
-            hide_index=True
+            hide_index=True,
+            on_select="rerun",     # גורם לאפליקציה להתעדכן כשבוחרים שורה
+            selection_mode="multi-row" # מאפשר לבחור כמה שורות
         )
 
-        # --- אזור העתקה לאקסל ---
-        st.info("👇 העתק מכאן לאקסל (הוספנו מק\"ט אחרי הכמות)")
-        excel_string_final = "\n".join(excel_copy_lines)
-        st.code(excel_string_final, language="csv")
+        # --- לוגיקת הסינון להעתקה ---
+        selected_indices = event.selection.rows
+        
+        # אם יש בחירה - מציגים רק את מה שנבחר. אחרת - את הכל.
+        if selected_indices:
+            final_excel_lines = [excel_copy_lines[i] for i in selected_indices]
+            final_text_lines = [full_text_copy_lines[i] for i in selected_indices]
+            st.success(f"נבחרו {len(selected_indices)} שורות להעתקה")
+        else:
+            final_excel_lines = excel_copy_lines
+            final_text_lines = full_text_copy_lines
 
-        # --- אזור העתקה טקסט מלא (פתוח תמיד) ---
+        # --- אזור העתקה לאקסל ---
+        st.caption("👇 העתק מכאן לאקסל (טאבים מפרידים לעמודות)")
+        st.code("\n".join(final_excel_lines), language="csv")
+
+        # --- אזור העתקה טקסט מלא ---
         st.markdown("### 📋 העתקת פרטים מלאים")
-        st.code("\n".join(full_text_copy_lines), language=None)
+        st.code("\n".join(final_text_lines), language=None)
         
     else:
         st.warning(f"לא נמצאו הזמנות עבור {search_type}: {clean_query}")
