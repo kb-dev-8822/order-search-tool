@@ -60,7 +60,7 @@ def clean_input_garbage(val):
 # --- עיצוב CSS ---
 st.markdown("""
 <style>
-    /* כיוון כללי לאפליקציה */
+    /* כיוון כללי לאפליקציה - עברית */
     .stApp { direction: rtl; }
     .stMarkdown, h1, h3, h2, p, label, .stRadio { text-align: right !important; direction: rtl !important; }
     .stTextInput input { direction: rtl; text-align: right; }
@@ -70,22 +70,27 @@ st.markdown("""
     div[data-testid="stDataEditor"] td { text-align: right !important; direction: rtl !important; }
     div[class*="stDataEditor"] div[role="columnheader"] { justify-content: flex-end; }
     div[class*="stDataEditor"] div[role="gridcell"] { text-align: right; direction: rtl; justify-content: flex-end; }
+    div[role="radiogroup"] { direction: rtl; text-align: right; justify-content: flex-end; }
+
+    /* --- תיקון אגרסיבי למיקום כפתור ההעתקה --- */
     
-    /* --- תיקון כפתורי ההעתקה --- */
-    
-    /* 1. הופכים את הקונטיינר של הקוד ל-LTR כדי שהכפתור יחזור לימין */
+    /* 1. מכריחים את הבלוק החיצוני להיות LTR (כדי שהכפתור יהיה בימין) */
     div[data-testid="stCodeBlock"] {
         direction: ltr !important;
     }
     
-    /* 2. מכריחים את הטקסט שבתוך הקוד להיות שוב RTL ומיושר לימין */
-    div[data-testid="stCodeBlock"] code {
+    /* 2. מכריחים את הטקסט הפנימי להיות מיושר לימין (כדי שיראה טוב בעברית) */
+    div[data-testid="stCodeBlock"] > div {
         direction: rtl !important;
         text-align: right !important;
-        white-space: pre-wrap !important;
+    }
+    
+    /* 3. וידוא שהקוד עצמו מיושר לימין */
+    code {
+        text-align: right !important;
+        white-space: pre-wrap !important; 
     }
 
-    div[role="radiogroup"] { direction: rtl; text-align: right; justify-content: flex-end; }
 </style>
 """, unsafe_allow_html=True)
 
