@@ -57,40 +57,39 @@ def clean_input_garbage(val):
         cleaned_val = cleaned_val.replace(char, '')
     return cleaned_val.strip()
 
-# --- עיצוב CSS ---
+# --- עיצוב CSS נקי ---
 st.markdown("""
 <style>
-    /* כיוון כללי לאפליקציה - עברית */
+    /* כיוון כללי לימין */
     .stApp { direction: rtl; }
-    .stMarkdown, h1, h3, h2, p, label, .stRadio { text-align: right !important; direction: rtl !important; }
-    .stTextInput input { direction: rtl; text-align: right; }
     
-    /* יישור הטבלה לימין */
+    /* יישור טקסטים וכותרות */
+    .stMarkdown, h1, h3, h2, p, label, .stRadio { 
+        text-align: right !important; 
+        direction: rtl !important; 
+    }
+    
+    /* יישור קלט בתיבות טקסט */
+    .stTextInput input { 
+        direction: rtl; 
+        text-align: right; 
+    }
+    
+    /* עיצוב הטבלה (Data Editor) */
     div[data-testid="stDataEditor"] th { text-align: right !important; direction: rtl !important; }
     div[data-testid="stDataEditor"] td { text-align: right !important; direction: rtl !important; }
     div[class*="stDataEditor"] div[role="columnheader"] { justify-content: flex-end; }
     div[class*="stDataEditor"] div[role="gridcell"] { text-align: right; direction: rtl; justify-content: flex-end; }
+    
+    /* יישור כפתורי רדיו */
     div[role="radiogroup"] { direction: rtl; text-align: right; justify-content: flex-end; }
-
-    /* --- תיקון אגרסיבי למיקום כפתור ההעתקה --- */
     
-    /* 1. מכריחים את הבלוק החיצוני להיות LTR (כדי שהכפתור יהיה בימין) */
-    div[data-testid="stCodeBlock"] {
-        direction: ltr !important;
-    }
-    
-    /* 2. מכריחים את הטקסט הפנימי להיות מיושר לימין (כדי שיראה טוב בעברית) */
-    div[data-testid="stCodeBlock"] > div {
-        direction: rtl !important;
-        text-align: right !important;
-    }
-    
-    /* 3. וידוא שהקוד עצמו מיושר לימין */
+    /* יישור תוכן תיבות קוד (העתקה) */
     code {
         text-align: right !important;
-        white-space: pre-wrap !important; 
+        white-space: pre-wrap !important;
+        direction: rtl !important;
     }
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -178,13 +177,16 @@ if search_query:
                     "סטטוס משלוח": tracking,
                     "תאריך": date_val,
                     "בחר": False,
+                    # שדות נסתרים להעתקה
                     "_excel_line": f"{order_num}\t{qty}\t{sku}\t{first_name}\t{street}\t{house}\t{city}\t{phone_display}",
                     "_text_line": f"פרטי הזמנה: מספר הזמנה: {order_num}, כמות: {qty}, מק\"ט: {sku}, שם: {full_name}, כתובת: {address_display}, טלפון: {phone_display}, מספר משלוח: {tracking}, תאריך: {date_val}"
                 })
 
             except IndexError: continue
         
+        # --- בניית הטבלה ---
         display_df = pd.DataFrame(display_rows)
+        # סידור עמודות (בחר בסוף = צד ימין במסך RTL)
         cols_order = ["תאריך", "מספר הזמנה", "שם לקוח", "טלפון", "כתובת מלאה", "מוצר", "כמות", "סטטוס משלוח", "בחר"]
         visible_df = display_df[cols_order]
 
@@ -200,6 +202,7 @@ if search_query:
             disabled=["תאריך", "מספר הזמנה", "שם לקוח", "טלפון", "כתובת מלאה", "מוצר", "כמות", "סטטוס משלוח"]
         )
 
+        # --- לוגיקת בחירה ---
         selected_rows = edited_df[edited_df["בחר"] == True]
         
         if selected_rows.empty:
@@ -215,6 +218,7 @@ if search_query:
         if not selected_rows.empty:
             st.success(msg)
 
+        # --- בלוקי העתקה ---
         st.caption("👇 העתק מכאן לאקסל (טאבים מפרידים לעמודות)")
         st.code("\n".join(final_excel_lines), language="csv")
 
