@@ -16,7 +16,6 @@ WORKSHEET_NAME = "הזמנות"
 def load_data():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     
-    # טעינה מתוך Secrets
     if "gcp_service_account" in st.secrets:
         creds_dict = st.secrets["gcp_service_account"]
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
@@ -40,22 +39,21 @@ def load_data():
     return df
 
 def normalize_search_input(phone_input):
-    # 1. משאיר רק ספרות (מעיף +, -, רווחים)
-    # דוגמה: "+972 54-123" הופך ל- "97254123"
+    # ניקוי בסיסי
+    if not phone_input: return ""
     clean_digits = ''.join(filter(str.isdigit, str(phone_input)))
     
-    # 2. אם המספר מתחיל ב-972, נחתוך את הקידומת הזו
+    # טיפול בקידומת 972
     if clean_digits.startswith('972'):
         clean_digits = clean_digits[3:]
         
-    # 3. אם יש 0 בהתחלה (למשל הזינו 054...), נוריד אותו
-    # כדי שיתאים לפורמט בשיטס (54...)
+    # טיפול ב-0 מוביל
     if clean_digits.startswith('0'):
         return clean_digits[1:]
         
     return clean_digits
 
-# --- עיצוב CSS (RTL) ---
+# --- עיצוב CSS ---
 st.markdown("""
 <style>
     .stApp { direction: rtl; }
@@ -94,25 +92,29 @@ with col_search:
 if search_query:
     filtered_df = pd.DataFrame()
     
-    # 1. חיפוש לפי טלפון (עם הלוגיקה החדשה ל-972)
+    # 1. חיפוש לפי טלפון
     if search_type == "טלפון":
         search_val = normalize_search_input(search_query)
-        if df.shape[1] > 7: # עמודה H
-            mask = df.iloc[:, 7].astype(str) == search_val
+        if df.shape[1] > 7:
+            # כאן אנחנו מנרמלים גם את הנתונים בטבלה כדי למנוע פספוסים
+            # (למשל אם בטבלה כתוב 050-123 ובחיפוש 050123)
+            mask = df.iloc[:, 7].astype(str).apply(normalize_search_input) == search_val
             filtered_df = df[mask].copy()
             
     # 2. חיפוש לפי מספר הזמנה
     elif search_type == "מספר הזמנה":
         search_val = search_query.strip()
-        if df.shape[1] > 0: # עמודה A
-            mask = df.iloc[:, 0].astype(str) == search_val
+        if df.shape[1] > 0:
+            # מנקה רווחים מהטבלה לפני ההשוואה
+            mask = df.iloc[:, 0].astype(str).str.strip() == search_val
             filtered_df = df[mask].copy()
 
     # 3. חיפוש לפי מספר משלוח
     else: 
         search_val = search_query.strip()
-        if df.shape[1] > 8: # עמודה I
-            mask = df.iloc[:, 8].astype(str) == search_val
+        if df.shape[1] > 8:
+            # מנקה רווחים מהטבלה לפני ההשוואה
+            mask = df.iloc[:, 8].astype(str).str.strip() == search_val
             filtered_df = df[mask].copy()
 
     # --- תוצאות ---
