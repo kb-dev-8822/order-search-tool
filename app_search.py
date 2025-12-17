@@ -10,28 +10,19 @@ st.set_page_config(layout="wide", page_title="איתור הזמנות", page_ico
 SPREADSHEET_ID = '1xUABIGIhnLxO2PYrpAOXZdk48Q-hNYOHkht2vUyaVdE'
 WORKSHEET_NAME = "הזמנות"
 
-# --- JS להעתקה ללוח ---
-# הפונקציה הזו מוזרקת לדפדפן ומאפשרת את פעולת ההעתקה
+# --- JS להעתקה ללוח (חובה כדי שהכפתור יעבוד) ---
 clipboard_script = """
 <script>
     function copyRowToClipboard(text) {
         navigator.clipboard.writeText(text).then(function() {
-            // אפשר להוסיף כאן התראה קטנה אם רוצים, כרגע זה שקט
             console.log('Copied to clipboard');
-            
-            // אפקט ויזואלי קטן על הכפתור
-            var activeElement = document.activeElement;
-            var originalText = activeElement.innerText;
-            activeElement.innerText = "הועתק! ✅";
-            setTimeout(function() {
-                activeElement.innerText = originalText;
-            }, 1000);
         }, function(err) {
             console.error('Could not copy text: ', err);
         });
     }
 </script>
 """
+# מזריק את הסקריפט לדף בצורה נסתרת
 st.components.v1.html(clipboard_script, height=0, width=0)
 
 # -------------------------------------------
@@ -88,48 +79,54 @@ st.markdown("""
     .stMarkdown, h1, h3, h2, p, label, .stRadio { text-align: right !important; direction: rtl !important; }
     .stTextInput input { direction: rtl; text-align: right; }
     
-    /* עיצוב לטבלה המותאמת אישית */
+    /* עיצוב הטבלה */
     .custom-table {
         width: 100%;
         border-collapse: collapse;
         margin-top: 20px;
         direction: rtl;
-        font-size: 0.9em;
+        font-size: 0.95em;
+        font-family: sans-serif;
     }
     .custom-table th {
         background-color: #262730;
         color: white;
         padding: 12px;
         text-align: right;
-        border-bottom: 2px solid #444;
+        border-bottom: 2px solid #555;
     }
     .custom-table td {
         padding: 10px;
         border-bottom: 1px solid #444;
         text-align: right;
-        color: #e0e0e0;
+        color: #ddd;
+        vertical-align: middle;
     }
     .custom-table tr:hover {
         background-color: #363945;
     }
     
-    /* עיצוב כפתור ההעתקה בתוך הטבלה */
+    /* כפתור העתקה משופר */
     .copy-btn {
         background-color: #4CAF50;
         border: none;
         color: white;
-        padding: 5px 10px;
+        padding: 6px 12px;
         text-align: center;
         text-decoration: none;
         display: inline-block;
-        font-size: 12px;
-        margin: 2px 1px;
-        cursor: pointer;
+        font-size: 13px;
+        font-weight: bold;
         border-radius: 4px;
-        transition-duration: 0.4s;
+        cursor: pointer;
+        transition: 0.2s;
     }
     .copy-btn:hover {
         background-color: #45a049;
+        transform: scale(1.05);
+    }
+    .copy-btn:active {
+        transform: scale(0.95);
     }
 
     code { direction: rtl; white-space: pre-wrap !important; text-align: right; }
@@ -181,22 +178,21 @@ if search_query:
     if not filtered_df.empty:
         st.write(f"### נמצאו {len(filtered_df)} הזמנות:")
         
-        # מיון לפי תאריך
+        # מיון לפי תאריך (לצורך סידור, גם אם לא מציגים אותו)
         if df.shape[1] > 9:
             try:
                 filtered_df['temp_date'] = pd.to_datetime(filtered_df.iloc[:, 9], dayfirst=True, errors='coerce')
                 filtered_df = filtered_df.sort_values(by='temp_date', ascending=True)
             except: pass
 
-        # --- בניית טבלת HTML מותאמת אישית ---
-        
-        # כותרות הטבלה
+        # --- בניית הטבלה ---
+        # בניית הכותרות (ללא תאריך)
+        # שים לב: הכל בשורה אחת או צמוד לשמאל כדי למנוע זיהוי כקוד
         html_table = """
         <table class="custom-table">
             <thead>
                 <tr>
-                    <th>פעולה</th>
-                    <th>תאריך</th>
+                    <th style="width: 100px;">פעולה</th>
                     <th>מספר הזמנה</th>
                     <th>שם לקוח</th>
                     <th>טלפון</th>
@@ -209,22 +205,22 @@ if search_query:
             <tbody>
         """
 
-        copy_texts = [] # עבור הבלוק התחתון שביקשת לא לגעת בו
+        copy_texts = []
 
         for index, row in filtered_df.iterrows():
             try:
-                # שליפת הנתונים הגולמיים
+                # נתונים
                 order_num = str(row.iloc[0]).strip()
                 qty = str(row.iloc[1]).strip()
                 sku = str(row.iloc[2]).strip()
                 full_name = str(row.iloc[3]).strip()
                 
-                # פירוק כתובת לעמודות נפרדות לאקסל
+                # כתובת מפורקת להעתקה
                 street = str(row.iloc[4]).strip() if pd.notna(row.iloc[4]) else ""
                 house = str(row.iloc[5]).strip() if pd.notna(row.iloc[5]) else ""
                 city = str(row.iloc[6]).strip() if pd.notna(row.iloc[6]) else ""
                 
-                # כתובת מלאה לתצוגה בטבלה
+                # כתובת לתצוגה
                 address_display = f"{street} {house} {city}".strip()
                 
                 phone_raw = row.iloc[7]
@@ -234,26 +230,18 @@ if search_query:
                 tracking = row.iloc[8]
                 if pd.isna(tracking) or str(tracking).strip() == "": tracking = "התקנה"
                 
-                date_val = str(row.iloc[9]).strip()
+                date_val = str(row.iloc[9]).strip() # שומרים בצד לטקסט למטה
 
-                # לוגיקה לשם פרטי (לוקח את המילה הראשונה)
                 first_name = full_name.split()[0] if full_name else ""
 
-                # --- יצירת המחרוזת להעתקה לאקסל (טאבים מפרידים בין תאים) ---
-                # סדר: מספר הזמנה, כמות, שם פרטי, רחוב, בית, עיר, טלפון
+                # סטרינג להעתקה לאקסל (טאבים)
                 excel_string = f"{order_num}\t{qty}\t{first_name}\t{street}\t{house}\t{city}\t{phone_display}"
-                # מנקה מרכאות שעלולות לשבור את ה-JS
                 excel_string_safe = excel_string.replace("'", "").replace('"', '')
 
-                # הוספת שורה לטבלה ב-HTML
-                html_table += f"""
+                # בניית השורה ב-HTML (חשוב! ללא הזחות מיותרות)
+                row_html = f"""
                 <tr>
-                    <td>
-                        <button class="copy-btn" onclick="copyRowToClipboard('{excel_string_safe}')">
-                            העתק לאקסל 📋
-                        </button>
-                    </td>
-                    <td>{date_val}</td>
+                    <td><button class="copy-btn" onclick="copyRowToClipboard('{excel_string_safe}')">העתק 📋</button></td>
                     <td>{order_num}</td>
                     <td>{full_name}</td>
                     <td>{phone_display}</td>
@@ -261,10 +249,11 @@ if search_query:
                     <td>{sku}</td>
                     <td>{qty}</td>
                     <td>{tracking}</td>
-                </tr>
-                """
+                </tr>"""
+                
+                html_table += row_html
 
-                # בניית הטקסט לבלוק ההעתקה המהירה התחתון (שמרנו עליו כמו שביקשת)
+                # טקסט לבלוק התחתון
                 formatted_text = (f"פרטי הזמנה: מספר הזמנה: {order_num}, כמות: {qty}, מק\"ט: {sku}, "
                                   f"שם: {full_name}, כתובת: {address_display}, טלפון: {phone_display}, "
                                   f"מספר משלוח: {tracking}, תאריך: {date_val}")
@@ -274,12 +263,10 @@ if search_query:
 
         html_table += "</tbody></table>"
         
-        # הזרקת ה-JS שוב כדי לוודא זמינות (בטוח)
+        # הזרקת הסקריפט והטבלה
         st.markdown(clipboard_script, unsafe_allow_html=True)
-        # הצגת הטבלה
         st.markdown(html_table, unsafe_allow_html=True)
 
-        # הבלוק התחתון שנשאר ללא שינוי
         st.markdown("### 📋 העתקה מהירה (טקסט מלא)")
         st.code("\n".join(copy_texts), language=None)
         
