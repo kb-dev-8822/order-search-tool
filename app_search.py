@@ -71,14 +71,18 @@ st.markdown("""
     div[class*="stDataEditor"] div[role="columnheader"] { justify-content: flex-end; }
     div[class*="stDataEditor"] div[role="gridcell"] { text-align: right; direction: rtl; justify-content: flex-end; }
     
-    /* יישור קוד להעתקה */
-    code { direction: rtl; white-space: pre-wrap !important; text-align: right; }
+    /* --- תיקון כפתורי ההעתקה --- */
     
-    /* --- התיקון לכפתור ההעתקה --- */
-    /* מכריח את הכפתור להיות בצד ימין (right: 0) ומבטל את הבריחה שמאלה (left: auto) */
-    [data-testid="stCopyButton"] {
-        right: 0.5rem !important;
-        left: auto !important;
+    /* 1. הופכים את הקונטיינר של הקוד ל-LTR כדי שהכפתור יחזור לימין */
+    div[data-testid="stCodeBlock"] {
+        direction: ltr !important;
+    }
+    
+    /* 2. מכריחים את הטקסט שבתוך הקוד להיות שוב RTL ומיושר לימין */
+    div[data-testid="stCodeBlock"] code {
+        direction: rtl !important;
+        text-align: right !important;
+        white-space: pre-wrap !important;
     }
 
     div[role="radiogroup"] { direction: rtl; text-align: right; justify-content: flex-end; }
