@@ -63,10 +63,13 @@ st.markdown("""
     .stApp { direction: rtl; }
     .stMarkdown, h1, h3, h2, p, label, .stRadio { text-align: right !important; direction: rtl !important; }
     .stTextInput input { direction: rtl; text-align: right; }
-    div[data-testid="stDataFrame"] th { text-align: right !important; direction: rtl !important; }
-    div[data-testid="stDataFrame"] td { text-align: right !important; direction: rtl !important; }
-    div[class*="stDataFrame"] div[role="columnheader"] { justify-content: flex-end; }
-    div[class*="stDataFrame"] div[role="gridcell"] { text-align: right; direction: rtl; justify-content: flex-end; }
+    
+    /* יישור הטבלה לימין */
+    div[data-testid="stDataEditor"] th { text-align: right !important; direction: rtl !important; }
+    div[data-testid="stDataEditor"] td { text-align: right !important; direction: rtl !important; }
+    div[class*="stDataEditor"] div[role="columnheader"] { justify-content: flex-end; }
+    div[class*="stDataEditor"] div[role="gridcell"] { text-align: right; direction: rtl; justify-content: flex-end; }
+    
     code { direction: rtl; white-space: pre-wrap !important; text-align: right; }
     div[role="radiogroup"] { direction: rtl; text-align: right; justify-content: flex-end; }
 </style>
@@ -122,14 +125,11 @@ if search_query:
                 filtered_df = filtered_df.sort_values(by='temp_date', ascending=True)
             except: pass
 
-        # רשימות שיחזיקו את הנתונים המוכנים
-        excel_copy_lines = []
-        full_text_copy_lines = []
         display_rows = []
-
+        
+        # בניית הנתונים
         for index, row in filtered_df.iterrows():
             try:
-                # חילוץ נתונים
                 order_num = str(row.iloc[0]).strip()
                 qty = str(row.iloc[1]).strip()
                 sku = str(row.iloc[2]).strip()
@@ -138,7 +138,6 @@ if search_query:
                 street = str(row.iloc[4]).strip() if pd.notna(row.iloc[4]) else ""
                 house = str(row.iloc[5]).strip() if pd.notna(row.iloc[5]) else ""
                 city = str(row.iloc[6]).strip() if pd.notna(row.iloc[6]) else ""
-                
                 address_display = f"{street} {house} {city}".strip()
                 
                 phone_raw = row.iloc[7]
@@ -151,7 +150,7 @@ if search_query:
                 date_val = str(row.iloc[9]).strip()
                 first_name = full_name.split()[0] if full_name else ""
 
-                # 1. שורה לתצוגה בטבלה
+                # בניית המילון לשורה
                 display_rows.append({
                     "מספר הזמנה": order_num,
                     "שם לקוח": full_name,
@@ -160,44 +159,63 @@ if search_query:
                     "מוצר": sku,
                     "כמות": qty,
                     "סטטוס משלוח": tracking,
-                    "תאריך": date_val
+                    "תאריך": date_val,
+                    "בחר": False, # ברירת מחדל לתיבת הסימון
+                    
+                    # שומרים נתונים נסתרים להעתקה נוחה אחר כך
+                    "_excel_line": f"{order_num}\t{qty}\t{sku}\t{first_name}\t{street}\t{house}\t{city}\t{phone_display}",
+                    "_text_line": f"פרטי הזמנה: מספר הזמנה: {order_num}, כמות: {qty}, מק\"ט: {sku}, שם: {full_name}, כתובת: {address_display}, טלפון: {phone_display}, מספר משלוח: {tracking}, תאריך: {date_val}"
                 })
 
-                # 2. שורה לאקסל (הזמנה -> כמות -> מק"ט -> שם פרטי -> רחוב -> בית -> עיר -> טלפון)
-                excel_line = f"{order_num}\t{qty}\t{sku}\t{first_name}\t{street}\t{house}\t{city}\t{phone_display}"
-                excel_copy_lines.append(excel_line)
-
-                # 3. שורה לטקסט מלא
-                text_line = (f"פרטי הזמנה: מספר הזמנה: {order_num}, כמות: {qty}, מק\"ט: {sku}, "
-                             f"שם: {full_name}, כתובת: {address_display}, טלפון: {phone_display}, "
-                             f"מספר משלוח: {tracking}, תאריך: {date_val}")
-                full_text_copy_lines.append(text_line)
-
             except IndexError: continue
-
-        # --- הצגת הטבלה עם בחירה (Selection) ---
-        st.info("💡 טיפ: סמן ב-V את השורות שברצונך להעתיק. אם לא תסמן, כל השורות יועתקו.")
         
-        # שימוש ב-event כדי ללכוד את הבחירה
-        event = st.dataframe(
-            pd.DataFrame(display_rows),
+        # יצירת DataFrame לתצוגה
+        display_df = pd.DataFrame(display_rows)
+        
+        # --- הטריק: סידור עמודות כדי שהצ'קבוקס יהיה בימין ---
+        # אנחנו שמים את עמודת "בחר" בסוף הרשימה. בגלל שהגריד הוא LTR, הסוף הוא בצד ימין.
+        cols_order = ["תאריך", "מספר הזמנה", "שם לקוח", "טלפון", "כתובת מלאה", "מוצר", "כמות", "סטטוס משלוח", "בחר"]
+        
+        # הגדרת אילו עמודות להציג (בלי הנתונים הנסתרים שהתחילו בקו תחתון)
+        visible_df = display_df[cols_order]
+
+        st.info("💡 סמן בתיבת הבחירה (מימין) את השורות להעתקה:")
+        
+        # --- שימוש ב-data_editor במקום dataframe ---
+        edited_df = st.data_editor(
+            visible_df,
             use_container_width=True,
             hide_index=True,
-            on_select="rerun",     # גורם לאפליקציה להתעדכן כשבוחרים שורה
-            selection_mode="multi-row" # מאפשר לבחור כמה שורות
+            column_config={
+                "בחר": st.column_config.CheckboxColumn(
+                    "בחר",
+                    help="סמן להעתקה",
+                    default=False,
+                )
+            },
+            # נועלים את כל העמודות לעריכה חוץ מ"בחר"
+            disabled=["תאריך", "מספר הזמנה", "שם לקוח", "טלפון", "כתובת מלאה", "מוצר", "כמות", "סטטוס משלוח"]
         )
 
         # --- לוגיקת הסינון להעתקה ---
-        selected_indices = event.selection.rows
+        # בודקים אילו שורות סומנו כ-True
+        selected_rows = edited_df[edited_df["בחר"] == True]
         
-        # אם יש בחירה - מציגים רק את מה שנבחר. אחרת - את הכל.
-        if selected_indices:
-            final_excel_lines = [excel_copy_lines[i] for i in selected_indices]
-            final_text_lines = [full_text_copy_lines[i] for i in selected_indices]
-            st.success(f"נבחרו {len(selected_indices)} שורות להעתקה")
+        # אם לא נבחר כלום - לוקחים את הכל (כמו שביקשת)
+        # אם נבחר משהו - לוקחים רק את הנבחרים
+        if selected_rows.empty:
+            final_indices = display_df.index
+            msg = "מעתיק את כל השורות (לא נבחר ספציפי)"
         else:
-            final_excel_lines = excel_copy_lines
-            final_text_lines = full_text_copy_lines
+            final_indices = selected_rows.index
+            msg = f"נבחרו {len(selected_rows)} שורות להעתקה"
+
+        # שליפת נתוני ההעתקה מה-DataFrame המקורי לפי האינדקסים
+        final_excel_lines = display_df.loc[final_indices, "_excel_line"].tolist()
+        final_text_lines = display_df.loc[final_indices, "_text_line"].tolist()
+
+        if not selected_rows.empty:
+            st.success(msg)
 
         # --- אזור העתקה לאקסל ---
         st.caption("👇 העתק מכאן לאקסל (טאבים מפרידים לעמודות)")
