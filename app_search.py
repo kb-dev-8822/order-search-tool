@@ -51,7 +51,6 @@ def normalize_phone(phone_input):
 
 def clean_input_garbage(val):
     if not isinstance(val, str): val = str(val)
-    # ניקוי תווים נסתרים שיכולים להרוס חיפוש
     garbage_chars = ['\u200f', '\u200e', '\u202a', '\u202b', '\u202c', '\u202d', '\u202e', '\u00a0', '\t', '\n', '\r']
     cleaned_val = val
     for char in garbage_chars:
@@ -123,11 +122,8 @@ if search_query:
                 filtered_df = filtered_df.sort_values(by='temp_date', ascending=True)
             except: pass
 
-        # הכנת הנתונים לתצוגה ולהעתקה
         excel_copy_lines = []
         full_text_copy_lines = []
-        
-        # יצירת דאטה-פריים ייעודי לתצוגה נקייה בטבלה
         display_rows = []
 
         for index, row in filtered_df.iterrows():
@@ -153,10 +149,9 @@ if search_query:
                 
                 date_val = str(row.iloc[9]).strip()
 
-                # שם פרטי (מילה ראשונה)
                 first_name = full_name.split()[0] if full_name else ""
 
-                # 1. שורה לתצוגה בטבלה הגרפית
+                # 1. שורה לתצוגה בטבלה
                 display_rows.append({
                     "מספר הזמנה": order_num,
                     "שם לקוח": full_name,
@@ -168,13 +163,12 @@ if search_query:
                     "תאריך": date_val
                 })
 
-                # 2. שורה להעתקה לאקסל (מופרדת בטאבים)
-                # סדר: הזמנה, כמות, שם פרטי, רחוב, בית, עיר, טלפון
-                # ה-\t אומר למחשב "תעבור לתא הבא באקסל"
-                excel_line = f"{order_num}\t{qty}\t{first_name}\t{street}\t{house}\t{city}\t{phone_display}"
+                # 2. שורה להעתקה לאקסל (טאבים)
+                # סדר מעודכן: הזמנה -> כמות -> מק"ט -> שם פרטי -> רחוב -> בית -> עיר -> טלפון
+                excel_line = f"{order_num}\t{qty}\t{sku}\t{first_name}\t{street}\t{house}\t{city}\t{phone_display}"
                 excel_copy_lines.append(excel_line)
 
-                # 3. שורה להעתקת טקסט מלא (הפורמט הישן והטוב)
+                # 3. שורה להעתקת טקסט מלא
                 text_line = (f"פרטי הזמנה: מספר הזמנה: {order_num}, כמות: {qty}, מק\"ט: {sku}, "
                              f"שם: {full_name}, כתובת: {address_display}, טלפון: {phone_display}, "
                              f"מספר משלוח: {tracking}, תאריך: {date_val}")
@@ -182,7 +176,7 @@ if search_query:
 
             except IndexError: continue
 
-        # --- הצגת הטבלה הנקייה (כמו פעם) ---
+        # --- הצגת הטבלה ---
         st.dataframe(
             pd.DataFrame(display_rows),
             use_container_width=True,
@@ -190,15 +184,13 @@ if search_query:
         )
 
         # --- אזור העתקה לאקסל ---
-        st.info("👇 העתק מכאן והדבק באקסל (זה יתפצל לבד לעמודות)")
-        # חיבור כל השורות (אם יש כמה תוצאות) לבלוק אחד
+        st.info("👇 העתק מכאן לאקסל (הוספנו מק\"ט אחרי הכמות)")
         excel_string_final = "\n".join(excel_copy_lines)
-        st.code(excel_string_final, language="csv") 
-        # הערה: זה נראה כמו טקסט פשוט, אבל כשתעתיק לאקסל זה יסתדר בול.
+        st.code(excel_string_final, language="csv")
 
-        # --- אזור העתקה טקסט מלא (למייל/וואטסאפ) ---
-        with st.expander("העתקת פרטים מלאים (למייל/וואטסאפ)"):
-            st.code("\n".join(full_text_copy_lines), language=None)
+        # --- אזור העתקה טקסט מלא (פתוח תמיד) ---
+        st.markdown("### 📋 העתקת פרטים מלאים")
+        st.code("\n".join(full_text_copy_lines), language=None)
         
     else:
         st.warning(f"לא נמצאו הזמנות עבור {search_type}: {clean_query}")
