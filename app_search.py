@@ -38,20 +38,46 @@ def load_data():
     df = pd.DataFrame(data[1:], columns=data[0])
     return df
 
-def normalize_search_input(phone_input):
-    # ניקוי בסיסי
+# --- פונקציות ניקוי ("מכונת השטיפה") ---
+
+def normalize_phone(phone_input):
+    """ניקוי ייעודי למספרי טלפון"""
     if not phone_input: return ""
     clean_digits = ''.join(filter(str.isdigit, str(phone_input)))
-    
-    # טיפול בקידומת 972
     if clean_digits.startswith('972'):
         clean_digits = clean_digits[3:]
-        
-    # טיפול ב-0 מוביל
     if clean_digits.startswith('0'):
         return clean_digits[1:]
-        
     return clean_digits
+
+def clean_input_garbage(val):
+    """
+    ניקוי אגרסיבי לטקסט שמועתיק ממיילים/וואטסאפ.
+    מסיר תווים נסתרים, רווחים קשיחים וסימני כיווניות.
+    """
+    if not isinstance(val, str):
+        val = str(val)
+        
+    # רשימת "החשודים המיידיים" בהעתקה ממיילים
+    garbage_chars = [
+        '\u200f', # Right-to-Left Mark (הכי נפוץ בעברית)
+        '\u200e', # Left-to-Right Mark
+        '\u202a', # Left-to-Right Embedding
+        '\u202b', # Right-to-Left Embedding
+        '\u202c', # Pop Directional Formatting
+        '\u202d', # Left-to-Right Override
+        '\u202e', # Right-to-Left Override
+        '\u00a0', # Non-Breaking Space (רווח קשיח של HTML)
+        '\t',     # Tab
+        '\n',     # New line
+        '\r'      # Carriage return
+    ]
+    
+    cleaned_val = val
+    for char in garbage_chars:
+        cleaned_val = cleaned_val.replace(char, '')
+        
+    return cleaned_val.strip() # מסיר גם רווחים רגילים בהתחלה ובסוף
 
 # --- עיצוב CSS ---
 st.markdown("""
@@ -70,7 +96,6 @@ st.markdown("""
 
 st.title("🔎 איתור הזמנות מהיר")
 
-# טעינה
 try:
     with st.spinner('טוען נתונים...'):
         df = load_data()
@@ -92,29 +117,31 @@ with col_search:
 if search_query:
     filtered_df = pd.DataFrame()
     
+    # שלב 1: ניקוי ה"זבל" מהקלט של המשתמש בלבד
+    # זה מטפל בבעיה של ה-99% (העתקה ממייל)
+    clean_query = clean_input_garbage(search_query)
+
     # 1. חיפוש לפי טלפון
     if search_type == "טלפון":
-        search_val = normalize_search_input(search_query)
+        # לטלפון יש ניקוי מיוחד (משאיר רק ספרות)
+        search_val = normalize_phone(clean_query)
         if df.shape[1] > 7:
-            # כאן אנחנו מנרמלים גם את הנתונים בטבלה כדי למנוע פספוסים
-            # (למשל אם בטבלה כתוב 050-123 ובחיפוש 050123)
-            mask = df.iloc[:, 7].astype(str).apply(normalize_search_input) == search_val
+            # כאן אני מניח שהשיטס "נקי" יחסית ולכן מנרמל אותו רק לטלפון סטנדרטי
+            mask = df.iloc[:, 7].astype(str).apply(normalize_phone) == search_val
             filtered_df = df[mask].copy()
             
     # 2. חיפוש לפי מספר הזמנה
     elif search_type == "מספר הזמנה":
-        search_val = search_query.strip()
         if df.shape[1] > 0:
-            # מנקה רווחים מהטבלה לפני ההשוואה
-            mask = df.iloc[:, 0].astype(str).str.strip() == search_val
+            # השוואה בין הקלט הנקי לבין הטבלה (כמו שהיא, רק הסרת רווחים)
+            mask = df.iloc[:, 0].astype(str).str.strip() == clean_query
             filtered_df = df[mask].copy()
 
     # 3. חיפוש לפי מספר משלוח
     else: 
-        search_val = search_query.strip()
         if df.shape[1] > 8:
-            # מנקה רווחים מהטבלה לפני ההשוואה
-            mask = df.iloc[:, 8].astype(str).str.strip() == search_val
+             # השוואה בין הקלט הנקי לבין הטבלה (כמו שהיא, רק הסרת רווחים)
+            mask = df.iloc[:, 8].astype(str).str.strip() == clean_query
             filtered_df = df[mask].copy()
 
     # --- תוצאות ---
@@ -164,4 +191,4 @@ if search_query:
         st.markdown("### 📋 העתקה מהירה")
         st.code("\n".join(copy_texts), language=None)
     else:
-        st.warning(f"לא נמצאו הזמנות עבור {search_type}: {search_query}")
+        st.warning(f"לא נמצאו הזמנות עבור {search_type}: {clean_query}")
