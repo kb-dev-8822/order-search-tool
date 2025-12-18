@@ -81,9 +81,6 @@ st.markdown("""
     div[class*="stDataEditor"] div[role="columnheader"] { justify-content: flex-end; }
     div[class*="stDataEditor"] div[role="gridcell"] { text-align: right; direction: rtl; justify-content: flex-end; }
     
-    /* יישור כפתורי רדיו */
-    div[role="radiogroup"] { direction: rtl; text-align: right; justify-content: flex-end; }
-    
     /* יישור תוכן תיבות קוד (העתקה) */
     code {
         text-align: right !important;
@@ -104,34 +101,47 @@ except Exception as e:
     st.stop()
 
 # --- אזור החיפוש ---
-col_search, col_radio = st.columns([3, 1])
+# עכשיו יש רק עמודה אחת רחבה לחיפוש
+search_query = st.text_input("הכנס טלפון, מספר הזמנה או מספר משלוח:", "")
 
-with col_radio:
-    search_type = st.radio("חפש לפי:", ("טלפון", "מספר הזמנה", "מספר משלוח"), horizontal=True)
-
-with col_search:
-    search_query = st.text_input(f"הכנס {search_type} לחיפוש:", "")
-
-# --- לוגיקה ---
+# --- לוגיקה חכמה (הכל ביחד) ---
 if search_query:
     filtered_df = pd.DataFrame()
-    clean_query = clean_input_garbage(search_query)
+    
+    # 1. הכנת הערכים לחיפוש
+    # ניקוי רגיל (למספרי הזמנה ומשלוח)
+    clean_text_query = clean_input_garbage(search_query)
+    # ניקוי לטלפון (רק ספרות, בלי 0 מוביל)
+    clean_phone_query = normalize_phone(clean_text_query)
 
-    if search_type == "טלפון":
-        search_val = normalize_phone(clean_query)
-        if df.shape[1] > 7:
-            mask = df.iloc[:, 7].astype(str).apply(normalize_phone) == search_val
-            filtered_df = df[mask].copy()
+    # 2. בניית המסכות (התנאים)
+    conditions = []
+    
+    # תנאי א': מספר הזמנה (עמודה 0) - התאמה מדויקת לטקסט הנקי
+    if df.shape[1] > 0:
+        mask_order = df.iloc[:, 0].astype(str).str.strip() == clean_text_query
+        conditions.append(mask_order)
+
+    # תנאי ב': מספר משלוח (עמודה 8) - התאמה מדויקת לטקסט הנקי
+    if df.shape[1] > 8:
+        mask_tracking = df.iloc[:, 8].astype(str).str.strip() == clean_text_query
+        conditions.append(mask_tracking)
+
+    # תנאי ג': טלפון (עמודה 7) - התאמה מנורמלת
+    if df.shape[1] > 7:
+        # רק אם הקלט נראה כמו מספר טלפון (יש בו ספרות), נחפש בטלפונים
+        if clean_phone_query: 
+            mask_phone = df.iloc[:, 7].astype(str).apply(normalize_phone) == clean_phone_query
+            conditions.append(mask_phone)
+
+    # 3. ביצוע החיפוש המשולב (OR)
+    if conditions:
+        # מחבר את כל התנאים עם "או" (אם נמצא בהזמנה או במשלוח או בטלפון)
+        final_mask = conditions[0]
+        for condition in conditions[1:]:
+            final_mask = final_mask | condition
             
-    elif search_type == "מספר הזמנה":
-        if df.shape[1] > 0:
-            mask = df.iloc[:, 0].astype(str).str.strip() == clean_query
-            filtered_df = df[mask].copy()
-
-    else: # מספר משלוח
-        if df.shape[1] > 8:
-            mask = df.iloc[:, 8].astype(str).str.strip() == clean_query
-            filtered_df = df[mask].copy()
+        filtered_df = df[final_mask].copy()
 
     # --- תוצאות ---
     if not filtered_df.empty:
@@ -186,7 +196,6 @@ if search_query:
         
         # --- בניית הטבלה ---
         display_df = pd.DataFrame(display_rows)
-        # סידור עמודות (בחר בסוף = צד ימין במסך RTL)
         cols_order = ["תאריך", "מספר הזמנה", "שם לקוח", "טלפון", "כתובת מלאה", "מוצר", "כמות", "סטטוס משלוח", "בחר"]
         visible_df = display_df[cols_order]
 
@@ -226,4 +235,4 @@ if search_query:
         st.code("\n".join(final_text_lines), language=None)
         
     else:
-        st.warning(f"לא נמצאו הזמנות עבור {search_type}: {clean_query}")
+        st.warning(f"לא נמצאו תוצאות עבור: {clean_text_query}")
