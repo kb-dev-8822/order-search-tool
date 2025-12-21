@@ -101,42 +101,48 @@ except Exception as e:
     st.stop()
 
 # --- אזור החיפוש ---
-# עכשיו יש רק עמודה אחת רחבה לחיפוש
 search_query = st.text_input("הכנס טלפון, מספר הזמנה או מספר משלוח:", "")
 
-# --- לוגיקה חכמה (הכל ביחד) ---
+# --- לוגיקה חכמה ---
 if search_query:
     filtered_df = pd.DataFrame()
     
-    # 1. הכנת הערכים לחיפוש
-    # ניקוי רגיל (למספרי הזמנה ומשלוח)
+    # ניקוי הקלט
     clean_text_query = clean_input_garbage(search_query)
-    # ניקוי לטלפון (רק ספרות, בלי 0 מוביל)
     clean_phone_query = normalize_phone(clean_text_query)
 
-    # 2. בניית המסכות (התנאים)
     conditions = []
     
-    # תנאי א': מספר הזמנה (עמודה 0) - התאמה מדויקת לטקסט הנקי
+    # תנאי א': מספר הזמנה (עמודה 0) - כאן השינוי החכם
     if df.shape[1] > 0:
-        mask_order = df.iloc[:, 0].astype(str).str.strip() == clean_text_query
-        conditions.append(mask_order)
+        # לוקחים את העמודה מהטבלה ומנקים רווחים
+        col_orders = df.iloc[:, 0].astype(str).str.strip()
+        
+        # 1. בדיקה רגילה: האם הערך בטבלה שווה בול למה שחיפשת?
+        # (תופס אם חיפשת 123-A ויש 123-A)
+        match_exact = col_orders == clean_text_query
+        
+        # 2. בדיקת בסיס: האם החלק הראשון לפני המקף שווה למה שחיפשת?
+        # (תופס אם חיפשת 123 ויש 123-A או 123-B)
+        # הפקודה split('-').str[0] לוקחת רק את מה שלפני המקף הראשון
+        match_base = col_orders.str.split('-').str[0].str.strip() == clean_text_query
+        
+        # מחברים את שתי האפשרויות ב-OR
+        conditions.append(match_exact | match_base)
 
-    # תנאי ב': מספר משלוח (עמודה 8) - התאמה מדויקת לטקסט הנקי
+    # תנאי ב': מספר משלוח (עמודה 8) - התאמה מדויקת
     if df.shape[1] > 8:
         mask_tracking = df.iloc[:, 8].astype(str).str.strip() == clean_text_query
         conditions.append(mask_tracking)
 
     # תנאי ג': טלפון (עמודה 7) - התאמה מנורמלת
     if df.shape[1] > 7:
-        # רק אם הקלט נראה כמו מספר טלפון (יש בו ספרות), נחפש בטלפונים
         if clean_phone_query: 
             mask_phone = df.iloc[:, 7].astype(str).apply(normalize_phone) == clean_phone_query
             conditions.append(mask_phone)
 
-    # 3. ביצוע החיפוש המשולב (OR)
+    # ביצוע החיפוש המשולב
     if conditions:
-        # מחבר את כל התנאים עם "או" (אם נמצא בהזמנה או במשלוח או בטלפון)
         final_mask = conditions[0]
         for condition in conditions[1:]:
             final_mask = final_mask | condition
@@ -187,7 +193,6 @@ if search_query:
                     "סטטוס משלוח": tracking,
                     "תאריך": date_val,
                     "בחר": False,
-                    # שדות נסתרים להעתקה
                     "_excel_line": f"{order_num}\t{qty}\t{sku}\t{first_name}\t{street}\t{house}\t{city}\t{phone_display}",
                     "_text_line": f"פרטי הזמנה: מספר הזמנה: {order_num}, כמות: {qty}, מק\"ט: {sku}, שם: {full_name}, כתובת: {address_display}, טלפון: {phone_display}, מספר משלוח: {tracking}, תאריך: {date_val}"
                 })
