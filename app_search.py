@@ -51,6 +51,7 @@ def normalize_phone(phone_input):
 
 def clean_input_garbage(val):
     if not isinstance(val, str): val = str(val)
+    # ניקוי אגרסיבי של תווים נסתרים
     garbage_chars = ['\u200f', '\u200e', '\u202a', '\u202b', '\u202c', '\u202d', '\u202e', '\u00a0', '\t', '\n', '\r']
     cleaned_val = val
     for char in garbage_chars:
@@ -107,35 +108,30 @@ search_query = st.text_input("הכנס טלפון, מספר הזמנה או מס
 if search_query:
     filtered_df = pd.DataFrame()
     
-    # ניקוי הקלט
+    # ניקוי הקלט שהמשתמש הזין
     clean_text_query = clean_input_garbage(search_query)
     clean_phone_query = normalize_phone(clean_text_query)
 
     conditions = []
     
-    # תנאי א': מספר הזמנה (עמודה 0) - כאן השינוי החכם
+    # תנאי א': מספר הזמנה (עמודה 0) - התיקון הגדול
     if df.shape[1] > 0:
-        # לוקחים את העמודה מהטבלה ומנקים רווחים
-        col_orders = df.iloc[:, 0].astype(str).str.strip()
+        # אנו מנקים את העמודה בטבלה מתווים נסתרים כדי להבטיח התאמה
+        col_orders = df.iloc[:, 0].astype(str).apply(clean_input_garbage)
         
-        # 1. בדיקה רגילה: האם הערך בטבלה שווה בול למה שחיפשת?
-        # (תופס אם חיפשת 123-A ויש 123-A)
-        match_exact = col_orders == clean_text_query
-        
-        # 2. בדיקת בסיס: האם החלק הראשון לפני המקף שווה למה שחיפשת?
-        # (תופס אם חיפשת 123 ויש 123-A או 123-B)
-        # הפקודה split('-').str[0] לוקחת רק את מה שלפני המקף הראשון
-        match_base = col_orders.str.split('-').str[0].str.strip() == clean_text_query
-        
-        # מחברים את שתי האפשרויות ב-OR
-        conditions.append(match_exact | match_base)
+        # בדיקה האם הערך בטבלה *מתחיל* במה שחיפשת
+        # זה יתפוס גם התאמה מדויקת וגם מקרים כמו "123-A" כשחיפשת "123"
+        mask_order = col_orders.str.startswith(clean_text_query)
+        conditions.append(mask_order)
 
-    # תנאי ב': מספר משלוח (עמודה 8) - התאמה מדויקת
+    # תנאי ב': מספר משלוח (עמודה 8)
     if df.shape[1] > 8:
-        mask_tracking = df.iloc[:, 8].astype(str).str.strip() == clean_text_query
+        # גם כאן מנקים את הטבלה ליתר ביטחון
+        col_tracking = df.iloc[:, 8].astype(str).apply(clean_input_garbage)
+        mask_tracking = col_tracking == clean_text_query
         conditions.append(mask_tracking)
 
-    # תנאי ג': טלפון (עמודה 7) - התאמה מנורמלת
+    # תנאי ג': טלפון (עמודה 7)
     if df.shape[1] > 7:
         if clean_phone_query: 
             mask_phone = df.iloc[:, 7].astype(str).apply(normalize_phone) == clean_phone_query
