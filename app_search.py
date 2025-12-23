@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 # --- הגדרת תצוגה רחבה ---
 st.set_page_config(layout="wide", page_title="איתור הזמנות", page_icon="🔎")
@@ -16,11 +19,12 @@ WORKSHEET_NAME = "הזמנות"
 def load_data():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     
+    # טעינת מפתחות גוגל
     if "gcp_service_account" in st.secrets:
         creds_dict = st.secrets["gcp_service_account"]
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     else:
-        st.error("לא נמצא מפתח חיבור (Secrets). נא להגדיר אותו בהגדרות האפליקציה.")
+        st.error("לא נמצא מפתח חיבור (Secrets - GCP). נא להגדיר אותו.")
         st.stop()
 
     client = gspread.authorize(creds)
@@ -38,6 +42,50 @@ def load_data():
     df = pd.DataFrame(data[1:], columns=data[0])
     return df
 
+# --- פונקציות מייל ---
+
+def send_email_alert(tracking_number, email_type):
+    """
+    פונקציה לשליחת מייל
+    email_type: "status" (מה קורה) או "return" (להחזיר)
+    """
+    if "email" not in st.secrets:
+        st.error("חסרות הגדרות אימייל ב-Secrets.")
+        return False
+
+    sender = st.secrets["email"]["sender_address"]
+    password = st.secrets["email"]["password"]
+    recipient = st.secrets["email"]["recipient_address"]
+
+    # הגדרת הנושא והתוכן לפי סוג הכפתור שנלחץ
+    if email_type == "status":
+        subject = f"{tracking_number} מה קורה עם זה?"
+        body = f"היי,\n\nאשמח לבדוק מה הסטטוס של מספר משלוח: {tracking_number}\n\nתודה."
+    elif email_type == "return":
+        subject = f"{tracking_number} להחזיר אלינו"
+        body = f"היי,\n\nנא להחזיר אלינו את המשלוח שמספרו: {tracking_number}\n\nתודה."
+    else:
+        return False
+
+    # יצירת ההודעה
+    msg = MIMEMultipart()
+    msg['From'] = sender
+    msg['To'] = recipient
+    msg['Subject'] = subject
+    msg.attach(MIMEText(body, 'plain', 'utf-8'))
+
+    # שליחה בפועל
+    try:
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(sender, password)
+        server.send_message(msg)
+        server.quit()
+        return True
+    except Exception as e:
+        st.error(f"שגיאה בשליחת מייל: {e}")
+        return False
+
 # --- פונקציות ניקוי ---
 
 def normalize_phone(phone_input):
@@ -51,42 +99,31 @@ def normalize_phone(phone_input):
 
 def clean_input_garbage(val):
     if not isinstance(val, str): val = str(val)
-    # ניקוי אגרסיבי של תווים נסתרים
     garbage_chars = ['\u200f', '\u200e', '\u202a', '\u202b', '\u202c', '\u202d', '\u202e', '\u00a0', '\t', '\n', '\r']
     cleaned_val = val
     for char in garbage_chars:
         cleaned_val = cleaned_val.replace(char, '')
     return cleaned_val.strip()
 
-# --- עיצוב CSS נקי ---
+# --- עיצוב CSS ---
 st.markdown("""
 <style>
-    /* כיוון כללי לימין */
     .stApp { direction: rtl; }
+    .stMarkdown, h1, h3, h2, p, label, .stRadio { text-align: right !important; direction: rtl !important; }
+    .stTextInput input { direction: rtl; text-align: right; }
     
-    /* יישור טקסטים וכותרות */
-    .stMarkdown, h1, h3, h2, p, label, .stRadio { 
-        text-align: right !important; 
-        direction: rtl !important; 
-    }
-    
-    /* יישור קלט בתיבות טקסט */
-    .stTextInput input { 
-        direction: rtl; 
-        text-align: right; 
-    }
-    
-    /* עיצוב הטבלה (Data Editor) */
     div[data-testid="stDataEditor"] th { text-align: right !important; direction: rtl !important; }
     div[data-testid="stDataEditor"] td { text-align: right !important; direction: rtl !important; }
     div[class*="stDataEditor"] div[role="columnheader"] { justify-content: flex-end; }
     div[class*="stDataEditor"] div[role="gridcell"] { text-align: right; direction: rtl; justify-content: flex-end; }
     
-    /* יישור תוכן תיבות קוד (העתקה) */
-    code {
-        text-align: right !important;
-        white-space: pre-wrap !important;
-        direction: rtl !important;
+    code { text-align: right !important; white-space: pre-wrap !important; direction: rtl !important; }
+    
+    /* כפתורים גדולים למטה */
+    .stButton button {
+        width: 100%;
+        border-radius: 8px;
+        font-weight: bold;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -107,42 +144,33 @@ search_query = st.text_input("הכנס טלפון, מספר הזמנה או מס
 # --- לוגיקה חכמה ---
 if search_query:
     filtered_df = pd.DataFrame()
-    
-    # ניקוי הקלט שהמשתמש הזין
     clean_text_query = clean_input_garbage(search_query)
     clean_phone_query = normalize_phone(clean_text_query)
 
     conditions = []
     
-    # תנאי א': מספר הזמנה (עמודה 0) - התיקון הגדול
+    # תנאי א': מספר הזמנה
     if df.shape[1] > 0:
-        # אנו מנקים את העמודה בטבלה מתווים נסתרים כדי להבטיח התאמה
         col_orders = df.iloc[:, 0].astype(str).apply(clean_input_garbage)
-        
-        # בדיקה האם הערך בטבלה *מתחיל* במה שחיפשת
-        # זה יתפוס גם התאמה מדויקת וגם מקרים כמו "123-A" כשחיפשת "123"
         mask_order = col_orders.str.startswith(clean_text_query)
         conditions.append(mask_order)
 
-    # תנאי ב': מספר משלוח (עמודה 8)
+    # תנאי ב': מספר משלוח
     if df.shape[1] > 8:
-        # גם כאן מנקים את הטבלה ליתר ביטחון
         col_tracking = df.iloc[:, 8].astype(str).apply(clean_input_garbage)
         mask_tracking = col_tracking == clean_text_query
         conditions.append(mask_tracking)
 
-    # תנאי ג': טלפון (עמודה 7)
+    # תנאי ג': טלפון
     if df.shape[1] > 7:
         if clean_phone_query: 
             mask_phone = df.iloc[:, 7].astype(str).apply(normalize_phone) == clean_phone_query
             conditions.append(mask_phone)
 
-    # ביצוע החיפוש המשולב
     if conditions:
         final_mask = conditions[0]
         for condition in conditions[1:]:
             final_mask = final_mask | condition
-            
         filtered_df = df[final_mask].copy()
 
     # --- תוצאות ---
@@ -163,19 +191,15 @@ if search_query:
                 qty = str(row.iloc[1]).strip()
                 sku = str(row.iloc[2]).strip()
                 full_name = str(row.iloc[3]).strip()
-                
                 street = str(row.iloc[4]).strip() if pd.notna(row.iloc[4]) else ""
                 house = str(row.iloc[5]).strip() if pd.notna(row.iloc[5]) else ""
                 city = str(row.iloc[6]).strip() if pd.notna(row.iloc[6]) else ""
                 address_display = f"{street} {house} {city}".strip()
-                
                 phone_raw = row.iloc[7]
                 phone_clean = normalize_phone(phone_raw)
                 phone_display = "0" + phone_clean if phone_clean else ""
-                
                 tracking = row.iloc[8]
                 if pd.isna(tracking) or str(tracking).strip() == "": tracking = "התקנה"
-                
                 date_val = str(row.iloc[9]).strip()
                 first_name = full_name.split()[0] if full_name else ""
 
@@ -192,48 +216,94 @@ if search_query:
                     "_excel_line": f"{order_num}\t{qty}\t{sku}\t{first_name}\t{street}\t{house}\t{city}\t{phone_display}",
                     "_text_line": f"פרטי הזמנה: מספר הזמנה: {order_num}, כמות: {qty}, מק\"ט: {sku}, שם: {full_name}, כתובת: {address_display}, טלפון: {phone_display}, מספר משלוח: {tracking}, תאריך: {date_val}"
                 })
-
             except IndexError: continue
         
-        # --- בניית הטבלה ---
         display_df = pd.DataFrame(display_rows)
         cols_order = ["תאריך", "מספר הזמנה", "שם לקוח", "טלפון", "כתובת מלאה", "מוצר", "כמות", "סטטוס משלוח", "בחר"]
         visible_df = display_df[cols_order]
 
-        st.info("💡 סמן בתיבת הבחירה (מימין) את השורות להעתקה:")
+        st.info("💡 סמן שורות כדי לשלוח עליהן מייל (רק להזמנות עם מספר משלוח)")
         
         edited_df = st.data_editor(
             visible_df,
             use_container_width=True,
             hide_index=True,
-            column_config={
-                "בחר": st.column_config.CheckboxColumn("בחר", default=False)
-            },
+            column_config={"בחר": st.column_config.CheckboxColumn("בחר", default=False)},
             disabled=["תאריך", "מספר הזמנה", "שם לקוח", "טלפון", "כתובת מלאה", "מוצר", "כמות", "סטטוס משלוח"]
         )
 
-        # --- לוגיקת בחירה ---
+        # --- בחירה ---
         selected_rows = edited_df[edited_df["בחר"] == True]
         
         if selected_rows.empty:
             final_indices = display_df.index
             msg = "מעתיק את כל השורות (לא נבחר ספציפי)"
+            # אם לא נבחר כלום, לא נאפשר שליחת מייל כדי למנוע ספאם בטעות
+            allow_email = False
         else:
             final_indices = selected_rows.index
-            msg = f"נבחרו {len(selected_rows)} שורות להעתקה"
-
-        final_excel_lines = display_df.loc[final_indices, "_excel_line"].tolist()
-        final_text_lines = display_df.loc[final_indices, "_text_line"].tolist()
+            msg = f"נבחרו {len(selected_rows)} שורות"
+            allow_email = True
 
         if not selected_rows.empty:
             st.success(msg)
 
-        # --- בלוקי העתקה ---
-        st.caption("👇 העתק מכאן לאקסל (טאבים מפרידים לעמודות)")
+        # --- אזור העתקה וכפתורי שליחה ---
+        
+        st.divider() # קו מפריד יפה
+        
+        # אזור כפתורי המייל
+        st.markdown("### 📧 שליחת עדכונים למחסן")
+        col_mail1, col_mail2 = st.columns(2)
+        
+        with col_mail1:
+            if st.button("❓ מה קורה עם זה?", type="primary"):
+                if not allow_email:
+                    st.warning("נא לסמן ב-V לפחות הזמנה אחת עם מספר משלוח.")
+                else:
+                    count_sent = 0
+                    for idx, row in selected_rows.iterrows():
+                        track_num = row['סטטוס משלוח']
+                        # בדיקה שזה לא "התקנה" ולא ריק
+                        if track_num and track_num != "התקנה":
+                            if send_email_alert(track_num, "status"):
+                                count_sent += 1
+                                st.toast(f"נשלח מייל עבור {track_num} ✅")
+                        else:
+                            st.toast(f"דולג: להזמנה {row['מספר הזמנה']} אין מספר משלוח תקין ⚠️")
+                    
+                    if count_sent > 0:
+                        st.success(f"נשלחו {count_sent} מיילים בהצלחה!")
+
+        with col_mail2:
+            if st.button("↩️ להחזיר אלינו"):
+                if not allow_email:
+                    st.warning("נא לסמן ב-V לפחות הזמנה אחת עם מספר משלוח.")
+                else:
+                    count_sent = 0
+                    for idx, row in selected_rows.iterrows():
+                        track_num = row['סטטוס משלוח']
+                        if track_num and track_num != "התקנה":
+                            if send_email_alert(track_num, "return"):
+                                count_sent += 1
+                                st.toast(f"נשלח מייל עבור {track_num} ✅")
+                        else:
+                            st.toast(f"דולג: להזמנה {row['מספר הזמנה']} אין מספר משלוח תקין ⚠️")
+
+                    if count_sent > 0:
+                        st.success(f"נשלחו {count_sent} מיילים בהצלחה!")
+
+        st.divider()
+
+        # אזור העתקה (הישן והטוב)
+        final_excel_lines = display_df.loc[final_indices, "_excel_line"].tolist()
+        final_text_lines = display_df.loc[final_indices, "_text_line"].tolist()
+
+        st.caption("👇 העתק מכאן לאקסל")
         st.code("\n".join(final_excel_lines), language="csv")
 
-        st.markdown("### 📋 העתקת פרטים מלאים")
-        st.code("\n".join(final_text_lines), language=None)
+        with st.expander("העתקת פרטים מלאים"):
+            st.code("\n".join(final_text_lines), language=None)
         
     else:
         st.warning(f"לא נמצאו תוצאות עבור: {clean_text_query}")
