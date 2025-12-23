@@ -19,7 +19,6 @@ WORKSHEET_NAME = "הזמנות"
 def load_data():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     
-    # טעינת מפתחות גוגל
     if "gcp_service_account" in st.secrets:
         creds_dict = st.secrets["gcp_service_account"]
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
@@ -45,9 +44,6 @@ def load_data():
 # --- פונקציות מייל ---
 
 def send_email_alert(tracking_number, email_type):
-    """
-    פונקציה לשליחת מייל
-    """
     if "email" not in st.secrets:
         st.error("חסרות הגדרות אימייל ב-Secrets.")
         return False
@@ -115,10 +111,17 @@ st.markdown("""
     
     code { text-align: right !important; white-space: pre-wrap !important; direction: rtl !important; }
     
-    /* כפתורים למטה */
+    /* כפתורים */
     .stButton button {
         width: 100%;
         border-radius: 6px;
+        height: 3em; /* גובה אחיד */
+    }
+    
+    /* צמצום רווחים */
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 1rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -133,10 +136,10 @@ except Exception as e:
     st.error(f"שגיאה: {e}")
     st.stop()
 
-# --- אזור החיפוש ---
+# --- חיפוש ---
 search_query = st.text_input("הכנס טלפון, מספר הזמנה או מספר משלוח:", "")
 
-# --- לוגיקה חכמה ---
+# --- לוגיקה ---
 if search_query:
     filtered_df = pd.DataFrame()
     clean_text_query = clean_input_garbage(search_query)
@@ -144,19 +147,16 @@ if search_query:
 
     conditions = []
     
-    # תנאי א': מספר הזמנה
     if df.shape[1] > 0:
         col_orders = df.iloc[:, 0].astype(str).apply(clean_input_garbage)
         mask_order = col_orders.str.startswith(clean_text_query)
         conditions.append(mask_order)
 
-    # תנאי ב': מספר משלוח
     if df.shape[1] > 8:
         col_tracking = df.iloc[:, 8].astype(str).apply(clean_input_garbage)
         mask_tracking = col_tracking == clean_text_query
         conditions.append(mask_tracking)
 
-    # תנאי ג': טלפון
     if df.shape[1] > 7:
         if clean_phone_query: 
             mask_phone = df.iloc[:, 7].astype(str).apply(normalize_phone) == clean_phone_query
@@ -168,18 +168,17 @@ if search_query:
             final_mask = final_mask | condition
         filtered_df = df[final_mask].copy()
 
-    # --- תוצאות ---
+    # --- הצגת תוצאות ---
     if not filtered_df.empty:
-        st.write(f"### נמצאו {len(filtered_df)} הזמנות:")
-        
+        # מיון תאריכים
         if df.shape[1] > 9:
             try:
                 filtered_df['temp_date'] = pd.to_datetime(filtered_df.iloc[:, 9], dayfirst=True, errors='coerce')
                 filtered_df = filtered_df.sort_values(by='temp_date', ascending=True)
             except: pass
 
+        # הכנת הנתונים
         display_rows = []
-        
         for index, row in filtered_df.iterrows():
             try:
                 order_num = str(row.iloc[0]).strip()
@@ -217,8 +216,7 @@ if search_query:
         cols_order = ["תאריך", "מספר הזמנה", "שם לקוח", "טלפון", "כתובת מלאה", "מוצר", "כמות", "סטטוס משלוח", "בחר"]
         visible_df = display_df[cols_order]
 
-        st.info("💡 סמן שורות כדי לשלוח עליהן מייל (רק להזמנות עם מספר משלוח)")
-        
+        # --- טבלה עריכה ---
         edited_df = st.data_editor(
             visible_df,
             use_container_width=True,
@@ -227,71 +225,73 @@ if search_query:
             disabled=["תאריך", "מספר הזמנה", "שם לקוח", "טלפון", "כתובת מלאה", "מוצר", "כמות", "סטטוס משלוח"]
         )
 
-        # --- בחירה ---
-        selected_rows = edited_df[edited_df["בחר"] == True]
+        # --- לוגיקה חכמה לבחירה ---
+        # אם יש שורה אחת בלבד - לוקחים אותה אוטומטית (גם בלי סימון V)
+        # אם יש יותר משורה אחת - חייבים לסמן V
         
-        if selected_rows.empty:
-            final_indices = display_df.index
-            msg = "מעתיק את כל השורות (לא נבחר ספציפי)"
-            allow_email = False
+        is_single_result = (len(display_df) == 1)
+        
+        if is_single_result:
+            target_rows = display_df # לוקחים את כל הטבלה (שהיא שורה אחת)
+            allow_action = True
+            msg_status = "שורה בודדת - נבחרה אוטומטית"
         else:
-            final_indices = selected_rows.index
-            msg = f"נבחרו {len(selected_rows)} שורות"
-            allow_email = True
+            # לוקחים רק מה שסומן
+            target_rows = edited_df[edited_df["בחר"] == True]
+            if target_rows.empty:
+                allow_action = False
+                msg_status = "יש לסמן שורות לביצוע פעולה"
+            else:
+                allow_action = True
+                msg_status = f"נבחרו {len(target_rows)} שורות"
 
-        if not selected_rows.empty:
-            st.success(msg)
-
-        # --- אזור העתקה (הועבר למעלה) ---
-        final_excel_lines = display_df.loc[final_indices, "_excel_line"].tolist()
-        final_text_lines = display_df.loc[final_indices, "_text_line"].tolist()
-
-        st.caption("👇 העתק מכאן לאקסל")
-        st.code("\n".join(final_excel_lines), language="csv")
-
-        with st.expander("העתקת פרטים מלאים"):
-            st.code("\n".join(final_text_lines), language=None)
+        # --- אזור פעולות קומפקטי (כפתורים + קוד אקסל) ---
         
-        # --- אזור כפתורי המייל (הועבר למטה) ---
+        # עמודות צפופות: 2 כפתורים משמאל, ובלוק העתקה גדול מימין (או להפך בגלל ה-RTL)
+        col_btn1, col_btn2, col_copy = st.columns([1, 1, 3])
         
-        st.divider() # הפרדה עדינה
-        st.caption("📧 פעולות נוספות על השורות המסומנות:")
-        
-        col_mail1, col_mail2, col_mail3, col_mail4 = st.columns([1, 1, 1, 1]) # עימוד כדי שלא יהיו ענקיים
-        
-        with col_mail1:
-            if st.button("❓ מה קורה עם זה?"):
-                if not allow_email:
-                    st.warning("נא לסמן ב-V")
+        with col_btn1:
+            if st.button("❓ מה קורה?"):
+                if not allow_action:
+                    st.toast("⚠️ יש לסמן שורה (כשיש מספר תוצאות)")
                 else:
                     count_sent = 0
-                    for idx, row in selected_rows.iterrows():
+                    for idx, row in target_rows.iterrows():
                         track_num = row['סטטוס משלוח']
                         if track_num and track_num != "התקנה":
                             if send_email_alert(track_num, "status"):
                                 count_sent += 1
                                 st.toast(f"נשלח: {track_num} ✅")
                         else:
-                            st.toast(f"דולג (אין משלוח): {row['מספר הזמנה']}")
-                    if count_sent > 0:
-                        st.success(f"נשלחו {count_sent} מיילים!")
+                            st.toast(f"אין משלוח: {row['מספר הזמנה']}")
+                    if count_sent > 0: st.success("נשלח!")
 
-        with col_mail2:
-            if st.button("↩️ להחזיר אלינו"):
-                if not allow_email:
-                    st.warning("נא לסמן ב-V")
+        with col_btn2:
+            if st.button("↩️ להחזיר"):
+                if not allow_action:
+                    st.toast("⚠️ יש לסמן שורה (כשיש מספר תוצאות)")
                 else:
                     count_sent = 0
-                    for idx, row in selected_rows.iterrows():
+                    for idx, row in target_rows.iterrows():
                         track_num = row['סטטוס משלוח']
                         if track_num and track_num != "התקנה":
                             if send_email_alert(track_num, "return"):
                                 count_sent += 1
                                 st.toast(f"נשלח: {track_num} ✅")
                         else:
-                            st.toast(f"דולג (אין משלוח): {row['מספר הזמנה']}")
-                    if count_sent > 0:
-                        st.success(f"נשלחו {count_sent} מיילים!")
+                            st.toast(f"אין משלוח: {row['מספר הזמנה']}")
+                    if count_sent > 0: st.success("נשלח!")
+
+        with col_copy:
+            # הכנת הטקסט להעתקה
+            final_excel_lines = target_rows["_excel_line"].tolist()
+            # מציג את קוד ההעתקה בצורה נקייה וצמודה לכפתורים
+            st.code("\n".join(final_excel_lines), language="csv")
+
+        # --- פרטים מלאים (למטה, מוסתר כברירת מחדל כדי לחסוך מקום) ---
+        final_text_lines = target_rows["_text_line"].tolist()
+        with st.expander("📝 העתקת פרטים מלאים (טקסט)"):
+            st.code("\n".join(final_text_lines), language=None)
         
     else:
         st.warning(f"לא נמצאו תוצאות עבור: {clean_text_query}")
