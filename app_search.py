@@ -41,12 +41,9 @@ def load_data():
     df = pd.DataFrame(data[1:], columns=data[0])
     return df
 
-# --- פונקציות מייל (מעודכן: מקבל נושא וגוף מוכנים) ---
+# --- פונקציות מייל ---
 
 def send_custom_email(subject_line):
-    """
-    שולח מייל עם נושא מוגדר וגוף ריק
-    """
     if "email" not in st.secrets:
         st.error("חסרות הגדרות אימייל ב-Secrets.")
         return False
@@ -59,7 +56,6 @@ def send_custom_email(subject_line):
     msg['From'] = sender
     msg['To'] = recipient
     msg['Subject'] = subject_line
-    # גוף ריק כמו שביקשת
     msg.attach(MIMEText("", 'plain', 'utf-8'))
 
     try:
@@ -106,14 +102,12 @@ st.markdown("""
     
     code { text-align: right !important; white-space: pre-wrap !important; direction: rtl !important; }
     
-    /* כפתורים בגובה אחיד */
     .stButton button {
         width: 100%;
         border-radius: 6px;
         height: 3em; 
     }
     
-    /* צמצום רווחים למעלה */
     .block-container {
         padding-top: 2rem;
         padding-bottom: 1rem;
@@ -165,14 +159,12 @@ if search_query:
 
     # --- הצגת תוצאות ---
     if not filtered_df.empty:
-        # מיון תאריכים
         if df.shape[1] > 9:
             try:
                 filtered_df['temp_date'] = pd.to_datetime(filtered_df.iloc[:, 9], dayfirst=True, errors='coerce')
                 filtered_df = filtered_df.sort_values(by='temp_date', ascending=True)
             except: pass
 
-        # הכנת הנתונים למבנה תצוגה
         display_rows = []
         for index, row in filtered_df.iterrows():
             try:
@@ -209,8 +201,6 @@ if search_query:
         
         display_df = pd.DataFrame(display_rows)
         cols_order = ["תאריך", "מספר הזמנה", "שם לקוח", "טלפון", "כתובת מלאה", "מוצר", "כמות", "סטטוס משלוח", "בחר"]
-        
-        # יוצרים תצוגה רק עם העמודות הרלוונטיות
         visible_df = display_df[cols_order]
 
         # --- טבלה עריכה ---
@@ -222,88 +212,86 @@ if search_query:
             disabled=["תאריך", "מספר הזמנה", "שם לקוח", "טלפון", "כתובת מלאה", "מוצר", "כמות", "סטטוס משלוח"]
         )
 
-        # --- לוגיקה חכמה לבחירה ---
+        # --- לוגיקה חכמה להעתקה ושליחה ---
         
-        is_single_result = (len(display_df) == 1)
-        
-        if is_single_result:
-            # במקרה של שורה בודדת - לוקחים את כולה מה-Dataframe המקורי (שיש בו את השדות הנסתרים)
-            target_rows = display_df.copy()
-            allow_action = True
-        else:
-            # במקרה של ריבוי שורות - בודקים מה סומן ב-edited_df
-            # ואז שולפים את השורות המלאות מ-display_df לפי האינדקס
-            # (זה התיקון ל-KeyError)
-            selected_indices = edited_df[edited_df["בחר"] == True].index
-            target_rows = display_df.loc[selected_indices]
-            
-            if target_rows.empty:
-                allow_action = False
-            else:
-                allow_action = True
+        # 1. בודקים אם יש בחירה ידנית בטבלה
+        selected_indices = edited_df[edited_df["בחר"] == True].index
 
-        # --- אזור פעולות קומפקטי ---
+        # 2. קובעים מה להעתיק ומה לשלוח
+        if len(display_df) == 1:
+            # תוצאה אחת -> אוטומטית הכל
+            rows_for_copy = display_df
+            rows_for_email = display_df
+            email_ready = True
+        else:
+            # ריבוי תוצאות
+            if selected_indices.empty:
+                # לא סומן כלום -> העתק את הכל, אבל אל תאפשר מייל
+                rows_for_copy = display_df
+                rows_for_email = pd.DataFrame() # ריק
+                email_ready = False
+            else:
+                # סומן משהו -> העתק רק את המסומן, ושלח רק את המסומן
+                rows_for_copy = display_df.loc[selected_indices]
+                rows_for_email = display_df.loc[selected_indices]
+                email_ready = True
+
+        # --- אזור פעולות ---
         col_btn1, col_btn2, col_copy = st.columns([1, 1, 3])
         
         with col_btn1:
             if st.button("❓ מה קורה?"):
-                if not allow_action:
-                    st.toast("⚠️ יש לסמן שורה (כשיש מספר תוצאות)")
+                if not email_ready:
+                    st.toast("⚠️ למייל: נא לסמן שורות (כשיש כמה תוצאות)")
                 else:
-                    # איסוף מספרי משלוח
                     tracking_nums = []
-                    for idx, row in target_rows.iterrows():
+                    for idx, row in rows_for_email.iterrows():
                         tn = row['סטטוס משלוח']
                         if tn and tn != "התקנה":
                             tracking_nums.append(tn)
                     
                     if not tracking_nums:
-                        st.toast("⚠️ לא נמצאו מספרי משלוח בשורות שנבחרו")
+                        st.toast("⚠️ לא נמצאו מספרי משלוח לשליחה")
                     else:
-                        # יצירת המחרוזת: "123, 456"
                         joined_nums = ", ".join(tracking_nums)
-                        
-                        # בדיקה אם יחיד או רבים
                         if len(tracking_nums) > 1:
                             subject = f"{joined_nums} מה קורה עם אלה בבקשה?"
                         else:
                             subject = f"{joined_nums} מה קורה עם זה בבקשה?"
                         
                         if send_custom_email(subject):
-                            st.success(f"נשלח מייל בנושא: {subject}")
+                            st.success(f"נשלח: {subject}")
 
         with col_btn2:
             if st.button("↩️ להחזיר"):
-                if not allow_action:
-                    st.toast("⚠️ יש לסמן שורה (כשיש מספר תוצאות)")
+                if not email_ready:
+                    st.toast("⚠️ למייל: נא לסמן שורות (כשיש כמה תוצאות)")
                 else:
                     tracking_nums = []
-                    for idx, row in target_rows.iterrows():
+                    for idx, row in rows_for_email.iterrows():
                         tn = row['סטטוס משלוח']
                         if tn and tn != "התקנה":
                             tracking_nums.append(tn)
                     
                     if not tracking_nums:
-                        st.toast("⚠️ לא נמצאו מספרי משלוח בשורות שנבחרו")
+                        st.toast("⚠️ לא נמצאו מספרי משלוח לשליחה")
                     else:
                         joined_nums = ", ".join(tracking_nums)
-                        
-                        # כאן הניסוח תמיד אותו דבר בערך, אבל אפשר לדייק
                         subject = f"{joined_nums} להחזיר אלינו בבקשה"
-                        
                         if send_custom_email(subject):
-                            st.success(f"נשלח מייל בנושא: {subject}")
+                            st.success(f"נשלח: {subject}")
 
         with col_copy:
-            if not target_rows.empty:
-                final_excel_lines = target_rows["_excel_line"].tolist()
+            # מציג את השורות להעתקה (הכל, או מה שסומן)
+            if not rows_for_copy.empty:
+                final_excel_lines = rows_for_copy["_excel_line"].tolist()
                 st.code("\n".join(final_excel_lines), language="csv")
             else:
                 st.code("", language="csv")
 
-        # --- פרטים מלאים (למטה) ---
-        if not target_rows.empty:
-            final_text_lines = target_rows["_text_line"].tolist()
+        # --- פרטים מלאים ---
+        if not rows_for_copy.empty:
+            final_text_lines = rows_for_copy["_text_line"].tolist()
         else:
             final_text_lines = []
             
