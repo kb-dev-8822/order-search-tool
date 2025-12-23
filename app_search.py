@@ -41,9 +41,12 @@ def load_data():
     df = pd.DataFrame(data[1:], columns=data[0])
     return df
 
-# --- פונקציות מייל ---
+# --- פונקציות מייל (מעודכן: מקבל נושא וגוף מוכנים) ---
 
-def send_email_alert(tracking_number, email_type):
+def send_custom_email(subject_line):
+    """
+    שולח מייל עם נושא מוגדר וגוף ריק
+    """
     if "email" not in st.secrets:
         st.error("חסרות הגדרות אימייל ב-Secrets.")
         return False
@@ -52,20 +55,12 @@ def send_email_alert(tracking_number, email_type):
     password = st.secrets["email"]["password"]
     recipient = st.secrets["email"]["recipient_address"]
 
-    if email_type == "status":
-        subject = f"{tracking_number} מה קורה עם זה?"
-        body = f"היי,\n\nאשמח לבדוק מה הסטטוס של מספר משלוח: {tracking_number}\n\nתודה."
-    elif email_type == "return":
-        subject = f"{tracking_number} להחזיר אלינו"
-        body = f"היי,\n\nנא להחזיר אלינו את המשלוח שמספרו: {tracking_number}\n\nתודה."
-    else:
-        return False
-
     msg = MIMEMultipart()
     msg['From'] = sender
     msg['To'] = recipient
-    msg['Subject'] = subject
-    msg.attach(MIMEText(body, 'plain', 'utf-8'))
+    msg['Subject'] = subject_line
+    # גוף ריק כמו שביקשת
+    msg.attach(MIMEText("", 'plain', 'utf-8'))
 
     try:
         server = smtplib.SMTP('smtp.gmail.com', 587)
@@ -111,14 +106,14 @@ st.markdown("""
     
     code { text-align: right !important; white-space: pre-wrap !important; direction: rtl !important; }
     
-    /* כפתורים */
+    /* כפתורים בגובה אחיד */
     .stButton button {
         width: 100%;
         border-radius: 6px;
-        height: 3em; /* גובה אחיד */
+        height: 3em; 
     }
     
-    /* צמצום רווחים */
+    /* צמצום רווחים למעלה */
     .block-container {
         padding-top: 2rem;
         padding-bottom: 1rem;
@@ -177,7 +172,7 @@ if search_query:
                 filtered_df = filtered_df.sort_values(by='temp_date', ascending=True)
             except: pass
 
-        # הכנת הנתונים
+        # הכנת הנתונים למבנה תצוגה
         display_rows = []
         for index, row in filtered_df.iterrows():
             try:
@@ -214,6 +209,8 @@ if search_query:
         
         display_df = pd.DataFrame(display_rows)
         cols_order = ["תאריך", "מספר הזמנה", "שם לקוח", "טלפון", "כתובת מלאה", "מוצר", "כמות", "סטטוס משלוח", "בחר"]
+        
+        # יוצרים תצוגה רק עם העמודות הרלוונטיות
         visible_df = display_df[cols_order]
 
         # --- טבלה עריכה ---
@@ -226,28 +223,26 @@ if search_query:
         )
 
         # --- לוגיקה חכמה לבחירה ---
-        # אם יש שורה אחת בלבד - לוקחים אותה אוטומטית (גם בלי סימון V)
-        # אם יש יותר משורה אחת - חייבים לסמן V
         
         is_single_result = (len(display_df) == 1)
         
         if is_single_result:
-            target_rows = display_df # לוקחים את כל הטבלה (שהיא שורה אחת)
+            # במקרה של שורה בודדת - לוקחים את כולה מה-Dataframe המקורי (שיש בו את השדות הנסתרים)
+            target_rows = display_df.copy()
             allow_action = True
-            msg_status = "שורה בודדת - נבחרה אוטומטית"
         else:
-            # לוקחים רק מה שסומן
-            target_rows = edited_df[edited_df["בחר"] == True]
+            # במקרה של ריבוי שורות - בודקים מה סומן ב-edited_df
+            # ואז שולפים את השורות המלאות מ-display_df לפי האינדקס
+            # (זה התיקון ל-KeyError)
+            selected_indices = edited_df[edited_df["בחר"] == True].index
+            target_rows = display_df.loc[selected_indices]
+            
             if target_rows.empty:
                 allow_action = False
-                msg_status = "יש לסמן שורות לביצוע פעולה"
             else:
                 allow_action = True
-                msg_status = f"נבחרו {len(target_rows)} שורות"
 
-        # --- אזור פעולות קומפקטי (כפתורים + קוד אקסל) ---
-        
-        # עמודות צפופות: 2 כפתורים משמאל, ובלוק העתקה גדול מימין (או להפך בגלל ה-RTL)
+        # --- אזור פעולות קומפקטי ---
         col_btn1, col_btn2, col_copy = st.columns([1, 1, 3])
         
         with col_btn1:
@@ -255,41 +250,63 @@ if search_query:
                 if not allow_action:
                     st.toast("⚠️ יש לסמן שורה (כשיש מספר תוצאות)")
                 else:
-                    count_sent = 0
+                    # איסוף מספרי משלוח
+                    tracking_nums = []
                     for idx, row in target_rows.iterrows():
-                        track_num = row['סטטוס משלוח']
-                        if track_num and track_num != "התקנה":
-                            if send_email_alert(track_num, "status"):
-                                count_sent += 1
-                                st.toast(f"נשלח: {track_num} ✅")
+                        tn = row['סטטוס משלוח']
+                        if tn and tn != "התקנה":
+                            tracking_nums.append(tn)
+                    
+                    if not tracking_nums:
+                        st.toast("⚠️ לא נמצאו מספרי משלוח בשורות שנבחרו")
+                    else:
+                        # יצירת המחרוזת: "123, 456"
+                        joined_nums = ", ".join(tracking_nums)
+                        
+                        # בדיקה אם יחיד או רבים
+                        if len(tracking_nums) > 1:
+                            subject = f"{joined_nums} מה קורה עם אלה בבקשה?"
                         else:
-                            st.toast(f"אין משלוח: {row['מספר הזמנה']}")
-                    if count_sent > 0: st.success("נשלח!")
+                            subject = f"{joined_nums} מה קורה עם זה בבקשה?"
+                        
+                        if send_custom_email(subject):
+                            st.success(f"נשלח מייל בנושא: {subject}")
 
         with col_btn2:
             if st.button("↩️ להחזיר"):
                 if not allow_action:
                     st.toast("⚠️ יש לסמן שורה (כשיש מספר תוצאות)")
                 else:
-                    count_sent = 0
+                    tracking_nums = []
                     for idx, row in target_rows.iterrows():
-                        track_num = row['סטטוס משלוח']
-                        if track_num and track_num != "התקנה":
-                            if send_email_alert(track_num, "return"):
-                                count_sent += 1
-                                st.toast(f"נשלח: {track_num} ✅")
-                        else:
-                            st.toast(f"אין משלוח: {row['מספר הזמנה']}")
-                    if count_sent > 0: st.success("נשלח!")
+                        tn = row['סטטוס משלוח']
+                        if tn and tn != "התקנה":
+                            tracking_nums.append(tn)
+                    
+                    if not tracking_nums:
+                        st.toast("⚠️ לא נמצאו מספרי משלוח בשורות שנבחרו")
+                    else:
+                        joined_nums = ", ".join(tracking_nums)
+                        
+                        # כאן הניסוח תמיד אותו דבר בערך, אבל אפשר לדייק
+                        subject = f"{joined_nums} להחזיר אלינו בבקשה"
+                        
+                        if send_custom_email(subject):
+                            st.success(f"נשלח מייל בנושא: {subject}")
 
         with col_copy:
-            # הכנת הטקסט להעתקה
-            final_excel_lines = target_rows["_excel_line"].tolist()
-            # מציג את קוד ההעתקה בצורה נקייה וצמודה לכפתורים
-            st.code("\n".join(final_excel_lines), language="csv")
+            if not target_rows.empty:
+                final_excel_lines = target_rows["_excel_line"].tolist()
+                st.code("\n".join(final_excel_lines), language="csv")
+            else:
+                st.code("", language="csv")
 
-        # --- פרטים מלאים (למטה, מוסתר כברירת מחדל כדי לחסוך מקום) ---
-        final_text_lines = target_rows["_text_line"].tolist()
+        # --- פרטים מלאים (למטה) ---
+        if not target_rows.empty:
+            final_text_lines = target_rows["_text_line"].tolist()
+        else:
+            final_text_lines = []
+            
         with st.expander("📝 העתקת פרטים מלאים (טקסט)"):
             st.code("\n".join(final_text_lines), language=None)
         
