@@ -47,7 +47,6 @@ def load_data():
 def send_email_alert(tracking_number, email_type):
     """
     פונקציה לשליחת מייל
-    email_type: "status" (מה קורה) או "return" (להחזיר)
     """
     if "email" not in st.secrets:
         st.error("חסרות הגדרות אימייל ב-Secrets.")
@@ -57,7 +56,6 @@ def send_email_alert(tracking_number, email_type):
     password = st.secrets["email"]["password"]
     recipient = st.secrets["email"]["recipient_address"]
 
-    # הגדרת הנושא והתוכן לפי סוג הכפתור שנלחץ
     if email_type == "status":
         subject = f"{tracking_number} מה קורה עם זה?"
         body = f"היי,\n\nאשמח לבדוק מה הסטטוס של מספר משלוח: {tracking_number}\n\nתודה."
@@ -67,14 +65,12 @@ def send_email_alert(tracking_number, email_type):
     else:
         return False
 
-    # יצירת ההודעה
     msg = MIMEMultipart()
     msg['From'] = sender
     msg['To'] = recipient
     msg['Subject'] = subject
     msg.attach(MIMEText(body, 'plain', 'utf-8'))
 
-    # שליחה בפועל
     try:
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
@@ -119,11 +115,10 @@ st.markdown("""
     
     code { text-align: right !important; white-space: pre-wrap !important; direction: rtl !important; }
     
-    /* כפתורים גדולים למטה */
+    /* כפתורים למטה */
     .stButton button {
         width: 100%;
-        border-radius: 8px;
-        font-weight: bold;
+        border-radius: 6px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -238,7 +233,6 @@ if search_query:
         if selected_rows.empty:
             final_indices = display_df.index
             msg = "מעתיק את כל השורות (לא נבחר ספציפי)"
-            # אם לא נבחר כלום, לא נאפשר שליחת מייל כדי למנוע ספאם בטעות
             allow_email = False
         else:
             final_indices = selected_rows.index
@@ -248,54 +242,7 @@ if search_query:
         if not selected_rows.empty:
             st.success(msg)
 
-        # --- אזור העתקה וכפתורי שליחה ---
-        
-        st.divider() # קו מפריד יפה
-        
-        # אזור כפתורי המייל
-        st.markdown("### 📧 שליחת עדכונים למחסן")
-        col_mail1, col_mail2 = st.columns(2)
-        
-        with col_mail1:
-            if st.button("❓ מה קורה עם זה?", type="primary"):
-                if not allow_email:
-                    st.warning("נא לסמן ב-V לפחות הזמנה אחת עם מספר משלוח.")
-                else:
-                    count_sent = 0
-                    for idx, row in selected_rows.iterrows():
-                        track_num = row['סטטוס משלוח']
-                        # בדיקה שזה לא "התקנה" ולא ריק
-                        if track_num and track_num != "התקנה":
-                            if send_email_alert(track_num, "status"):
-                                count_sent += 1
-                                st.toast(f"נשלח מייל עבור {track_num} ✅")
-                        else:
-                            st.toast(f"דולג: להזמנה {row['מספר הזמנה']} אין מספר משלוח תקין ⚠️")
-                    
-                    if count_sent > 0:
-                        st.success(f"נשלחו {count_sent} מיילים בהצלחה!")
-
-        with col_mail2:
-            if st.button("↩️ להחזיר אלינו"):
-                if not allow_email:
-                    st.warning("נא לסמן ב-V לפחות הזמנה אחת עם מספר משלוח.")
-                else:
-                    count_sent = 0
-                    for idx, row in selected_rows.iterrows():
-                        track_num = row['סטטוס משלוח']
-                        if track_num and track_num != "התקנה":
-                            if send_email_alert(track_num, "return"):
-                                count_sent += 1
-                                st.toast(f"נשלח מייל עבור {track_num} ✅")
-                        else:
-                            st.toast(f"דולג: להזמנה {row['מספר הזמנה']} אין מספר משלוח תקין ⚠️")
-
-                    if count_sent > 0:
-                        st.success(f"נשלחו {count_sent} מיילים בהצלחה!")
-
-        st.divider()
-
-        # אזור העתקה (הישן והטוב)
+        # --- אזור העתקה (הועבר למעלה) ---
         final_excel_lines = display_df.loc[final_indices, "_excel_line"].tolist()
         final_text_lines = display_df.loc[final_indices, "_text_line"].tolist()
 
@@ -304,6 +251,47 @@ if search_query:
 
         with st.expander("העתקת פרטים מלאים"):
             st.code("\n".join(final_text_lines), language=None)
+        
+        # --- אזור כפתורי המייל (הועבר למטה) ---
+        
+        st.divider() # הפרדה עדינה
+        st.caption("📧 פעולות נוספות על השורות המסומנות:")
+        
+        col_mail1, col_mail2, col_mail3, col_mail4 = st.columns([1, 1, 1, 1]) # עימוד כדי שלא יהיו ענקיים
+        
+        with col_mail1:
+            if st.button("❓ מה קורה עם זה?"):
+                if not allow_email:
+                    st.warning("נא לסמן ב-V")
+                else:
+                    count_sent = 0
+                    for idx, row in selected_rows.iterrows():
+                        track_num = row['סטטוס משלוח']
+                        if track_num and track_num != "התקנה":
+                            if send_email_alert(track_num, "status"):
+                                count_sent += 1
+                                st.toast(f"נשלח: {track_num} ✅")
+                        else:
+                            st.toast(f"דולג (אין משלוח): {row['מספר הזמנה']}")
+                    if count_sent > 0:
+                        st.success(f"נשלחו {count_sent} מיילים!")
+
+        with col_mail2:
+            if st.button("↩️ להחזיר אלינו"):
+                if not allow_email:
+                    st.warning("נא לסמן ב-V")
+                else:
+                    count_sent = 0
+                    for idx, row in selected_rows.iterrows():
+                        track_num = row['סטטוס משלוח']
+                        if track_num and track_num != "התקנה":
+                            if send_email_alert(track_num, "return"):
+                                count_sent += 1
+                                st.toast(f"נשלח: {track_num} ✅")
+                        else:
+                            st.toast(f"דולג (אין משלוח): {row['מספר הזמנה']}")
+                    if count_sent > 0:
+                        st.success(f"נשלחו {count_sent} מיילים!")
         
     else:
         st.warning(f"לא נמצאו תוצאות עבור: {clean_text_query}")
