@@ -7,6 +7,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 import time
+import requests
 
 # --- הגדרת תצוגה רחבה ---
 st.set_page_config(layout="wide", page_title="איתור הזמנות", page_icon="🔎")
@@ -44,7 +45,6 @@ def load_data():
     headers = data[0]
     df = pd.DataFrame(data[1:], columns=headers)
     
-    # שמירת אינדקס שורה מקורי
     df['original_row_idx'] = range(2, len(data) + 1)
     
     if LOG_COLUMN_NAME not in df.columns:
@@ -70,11 +70,67 @@ def update_log_in_sheet(row_idx, message):
         sheet.update_cell(1, col_idx, LOG_COLUMN_NAME)
         
     timestamp = datetime.now().strftime("%d/%m %H:%M")
-    full_msg = f"📧 {message} ({timestamp})"
+    full_msg = f"{message} ({timestamp})"
     
     sheet.update_cell(row_idx, col_idx, full_msg)
     load_data.clear()
     return full_msg
+
+# --- פונקציות וואטסאפ (UltraMsg) ---
+
+def normalize_phone_for_api(phone_input):
+    """
+    מנרמל מספר לפורמט בינלאומי ללא פלוס (97250...)
+    """
+    if not phone_input: return None
+    # משאיר רק ספרות
+    digits = ''.join(filter(str.isdigit, str(phone_input)))
+    
+    if not digits: return None
+    
+    # טיפול בקידומות
+    if digits.startswith('972'):
+        return digits # כבר תקין
+    if digits.startswith('0'):
+        return '972' + digits[1:] # מוריד 0 מוסיף 972
+    
+    # אם זה מספר קצר בלי 0 ובלי 972 (כמו 501234567)
+    if len(digits) == 9:
+        return '972' + digits
+        
+    return digits # מחזיר כמו שהוא אם לא הצלחנו לזהות
+
+def send_whatsapp_message(phone, message_body):
+    if "ultramsg" not in st.secrets:
+        st.error("חסרות הגדרות UltraMsg ב-Secrets.")
+        return False
+
+    instance_id = st.secrets["ultramsg"]["instance_id"]
+    token = st.secrets["ultramsg"]["token"]
+    
+    clean_phone = normalize_phone_for_api(phone)
+    if not clean_phone:
+        return False
+        
+    url = f"https://api.ultramsg.com/{instance_id}/messages/chat"
+    
+    payload = {
+        "token": token,
+        "to": clean_phone,
+        "body": message_body
+    }
+    
+    try:
+        headers = {'content-type': 'application/x-www-form-urlencoded'}
+        response = requests.post(url, data=payload, headers=headers)
+        if response.status_code == 200 and 'sent' in response.text:
+            return True
+        else:
+            st.error(f"שגיאה בשליחת וואטסאפ: {response.text}")
+            return False
+    except Exception as e:
+        st.error(f"תקלה בשליחה: {e}")
+        return False
 
 # --- פונקציות מייל ---
 
@@ -221,6 +277,9 @@ if search_query:
                 
                 log_val = str(row.get(LOG_COLUMN_NAME, ""))
                 original_idx = row.get('original_row_idx', 0)
+                
+                # שמירת המספר הגולמי עבור וואטסאפ (אנחנו צריכים אותו עם הקידומת המקורית אם אפשר)
+                raw_phone_for_wa = str(phone_raw).strip()
 
                 display_rows.append({
                     "מספר הזמנה": order_num,
@@ -235,7 +294,8 @@ if search_query:
                     "בחר": False,
                     "_excel_line": f"{order_num}\t{qty}\t{sku}\t{first_name}\t{street}\t{house}\t{city}\t{phone_display}",
                     "_text_line": f"פרטי הזמנה: מספר הזמנה: {order_num}, כמות: {qty}, מק\"ט: {sku}, שם: {full_name}, כתובת: {address_display}, טלפון: {phone_display}, מספר משלוח: {tracking}, תאריך: {date_val}",
-                    "_original_row": original_idx
+                    "_original_row": original_idx,
+                    "_raw_phone": raw_phone_for_wa
                 })
             except IndexError: continue
         
@@ -248,7 +308,7 @@ if search_query:
             hide_index=True,
             column_config={
                 "בחר": st.column_config.CheckboxColumn("בחר", default=False),
-                LOG_COLUMN_NAME: st.column_config.TextColumn("לוג מיילים", disabled=True)
+                LOG_COLUMN_NAME: st.column_config.TextColumn("לוג", disabled=True)
             },
             disabled=["תאריך", "מספר הזמנה", "שם לקוח", "טלפון", "כתובת מלאה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME]
         )
@@ -261,88 +321,127 @@ if search_query:
         else:
             if selected_indices.empty:
                 target_rows = display_df
-                rows_for_email = pd.DataFrame() 
+                rows_for_action = pd.DataFrame() 
             else:
                 target_rows = display_df.loc[selected_indices]
-                rows_for_email = target_rows
+                rows_for_action = target_rows
             
-            allow_action = not rows_for_email.empty if not selected_indices.empty else False
+            allow_action = not rows_for_action.empty if not selected_indices.empty else False
 
-        col_btn1, col_btn2, col_copy = st.columns([1, 1, 3])
+        # --- אזור כפתורים (3 עמודות: וואטסאפ, מייל סטטוס, מייל החזרה) ---
+        col_wa, col_mail1, col_mail2 = st.columns([1.5, 1, 1])
         
-        with col_btn1:
-            if st.button("❓ מה קורה?"):
-                if len(display_df) > 1 and selected_indices.empty:
-                    st.toast("⚠️ למייל: נא לסמן שורות")
+        # כפתור וואטסאפ (תופס קצת יותר מקום כי הטקסט ארוך)
+        with col_wa:
+            if st.button("💬 שלח מדיניות החזרה"):
+                if not allow_action:
+                    st.toast("⚠️ יש לסמן שורה (כשיש מספר תוצאות)")
                 else:
-                    current_email_rows = target_rows if len(display_df) == 1 else rows_for_email
+                    count_sent = 0
+                    rows_to_update = []
                     
+                    # במקרה של שורה בודדת משתמשים ב-target_rows, אחרת במה שסומן
+                    working_rows = target_rows if len(display_df) == 1 else rows_for_action
+                    
+                    for idx, row in working_rows.iterrows():
+                        phone = row['_raw_phone']
+                        if not phone:
+                            st.toast(f"❌ אין טלפון להזמנה {row['מספר הזמנה']}")
+                            continue
+                            
+                        client_name = row['שם לקוח'].split()[0] if row['שם לקוח'] else "לקוח"
+                        order_num = row['מספר הזמנה']
+                        sku = row['מוצר']
+                        
+                        # נוסח ההודעה המדויק
+                        msg_body = f"""שלום {client_name},
+מדברים לגבי הזמנה {order_num} (מוצר: {sku}).
+הבנתי שיש בעיה במוצר או שאתה מעוניין להחזיר אותו.
+
+שים לב לנהלי ההחזרה:
+1. אם זו *החזרה רגילה* (מוצר לא פגום) - הזיכוי יהיה בניכוי דמי משלוח (99 ש"ח) על כל חבילה שחוזרת. אנא שלח לנו תמונה של המוצר כשהוא ארוז חזרה עם מסקינטייפ, כדי שנוכל לתאם שליח לאיסוף (עד 7 ימי עסקים מרגע קבלת התמונה).
+
+2. אם זה *מוצר פגום* - אנא שלח לנו תמונות ברורות של הפגמים, ונציג מטעמנו יחזור אליך לגבי המשך הטיפול (עד 3 ימי עסקים).
+
+תודה!"""
+                        
+                        if send_whatsapp_message(phone, msg_body):
+                            count_sent += 1
+                            rows_to_update.append(row['_original_row'])
+                            st.toast(f"נשלח וואטסאפ ל-{client_name} ✅")
+                    
+                    if count_sent > 0:
+                        for r_idx in rows_to_update:
+                            update_log_in_sheet(r_idx, "💬 נשלח ווצאפ החזרה")
+                        time.sleep(1)
+                        st.rerun()
+
+        # כפתורי מייל (כמו קודם)
+        with col_mail1:
+            if st.button("❓ מה קורה?"):
+                if not allow_action:
+                    st.toast("⚠️ יש לסמן שורה")
+                else:
+                    working_rows = target_rows if len(display_df) == 1 else rows_for_action
                     tracking_nums = []
-                    rows_to_update = [] 
-                    
-                    # בדיקת כפילות לא חוסמת - רק התראה בטוסט
+                    rows_to_update = []
                     duplicate_alert = False
                     
-                    for idx, row in current_email_rows.iterrows():
+                    for idx, row in working_rows.iterrows():
                         tn = row['סטטוס משלוח']
-                        log_status = row[LOG_COLUMN_NAME]
-                        
-                        if "נשלח בדיקה" in str(log_status):
+                        if "נשלח בדיקה" in str(row[LOG_COLUMN_NAME]):
                             duplicate_alert = True
-                            
                         if tn and tn != "התקנה":
                             tracking_nums.append(tn)
                             rows_to_update.append(row['_original_row'])
                     
                     if duplicate_alert:
-                        st.toast("⚠️ שים לב: לחלק מההזמנות כבר נשלח מייל בעבר. שולח שוב...")
-                        time.sleep(1) # השהייה קטנה שתספיק לקרוא
+                        st.toast("⚠️ שים לב: כבר נשלח מייל בעבר")
+                        time.sleep(1)
 
                     if not tracking_nums:
-                        st.toast("⚠️ לא נמצאו מספרי משלוח תקינים לשליחה")
+                        st.toast("⚠️ אין מספרי משלוח תקינים")
                     else:
                         joined_nums = ", ".join(tracking_nums)
                         subject = f"{joined_nums} מה קורה עם זה בבקשה?" if len(tracking_nums)==1 else f"{joined_nums} מה קורה עם אלה בבקשה?"
                         
                         if send_custom_email(subject):
                             st.success(f"נשלח: {subject}")
-                            # עדכון בשיטס (דורס את הישן עם תאריך חדש)
                             for r_idx in rows_to_update:
-                                update_log_in_sheet(r_idx, "נשלח בדיקה")
+                                update_log_in_sheet(r_idx, "📧 נשלח בדיקה")
                             time.sleep(1)
                             st.rerun()
 
-        with col_btn2:
+        with col_mail2:
             if st.button("↩️ להחזיר"):
-                if len(display_df) > 1 and selected_indices.empty:
-                    st.toast("⚠️ למייל: נא לסמן שורות")
+                if not allow_action:
+                    st.toast("⚠️ יש לסמן שורה")
                 else:
-                    current_email_rows = target_rows if len(display_df) == 1 else rows_for_email
-                    
+                    working_rows = target_rows if len(display_df) == 1 else rows_for_action
                     tracking_nums = []
-                    for idx, row in current_email_rows.iterrows():
+                    for idx, row in working_rows.iterrows():
                         tn = row['סטטוס משלוח']
                         if tn and tn != "התקנה":
                             tracking_nums.append(tn)
                     
                     if not tracking_nums:
-                        st.toast("⚠️ לא נמצאו מספרי משלוח לשליחה")
+                        st.toast("⚠️ אין מספרי משלוח")
                     else:
                         joined_nums = ", ".join(tracking_nums)
                         subject = f"{joined_nums} להחזיר אלינו בבקשה"
                         if send_custom_email(subject):
                             st.success(f"נשלח: {subject}")
 
-        with col_copy:
-            if not target_rows.empty:
-                final_excel_lines = target_rows["_excel_line"].tolist()
-                st.code("\n".join(final_excel_lines), language="csv")
-            else:
-                st.code("", language="csv")
-
-        final_text_lines = target_rows["_text_line"].tolist() if not target_rows.empty else []
-        with st.expander("📝 העתקת פרטים מלאים (טקסט)"):
-            st.code("\n".join(final_text_lines), language=None)
+        # --- העתקה (למטה) ---
+        st.divider()
+        if not target_rows.empty:
+            final_excel_lines = target_rows["_excel_line"].tolist()
+            st.caption("העתקה לאקסל:")
+            st.code("\n".join(final_excel_lines), language="csv")
+            
+            final_text_lines = target_rows["_text_line"].tolist()
+            with st.expander("📝 פרטים מלאים (טקסט)"):
+                st.code("\n".join(final_text_lines), language=None)
         
     else:
         st.warning(f"לא נמצאו תוצאות עבור: {clean_text_query}")
