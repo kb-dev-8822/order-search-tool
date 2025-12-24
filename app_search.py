@@ -19,7 +19,7 @@ LOG_COLUMN_NAME = "לוג מיילים"
 
 # -------------------------------------------
 
-@st.cache_data(ttl=60)
+@st.cache_data
 def load_data():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     
@@ -442,3 +442,4 @@ if search_query:
         
     else:
         st.warning(f"לא נמצאו תוצאות עבור: {clean_text_query}")
+
