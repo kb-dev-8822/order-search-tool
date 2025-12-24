@@ -52,7 +52,7 @@ def load_data():
         
     return df
 
-# --- Write-Back ---
+# --- Write-Back (מתוקן - מוסיף במקום לדרוס) ---
 def update_log_in_sheet(row_idx, message):
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     creds_dict = st.secrets["gcp_service_account"]
@@ -69,36 +69,37 @@ def update_log_in_sheet(row_idx, message):
         col_idx = len(headers) + 1
         sheet.update_cell(1, col_idx, LOG_COLUMN_NAME)
         
+    # קריאת הערך הקיים כדי לא לדרוס אותו
+    current_val = sheet.cell(row_idx, col_idx).value or ""
+    
     timestamp = datetime.now().strftime("%d/%m %H:%M")
-    full_msg = f"{message} ({timestamp})"
+    new_entry = f"{message} ({timestamp})"
+    
+    # אם יש כבר תוכן, נוסיף קו מפריד. אם לא, נכתוב ישר.
+    if current_val:
+        full_msg = f"{current_val} | {new_entry}"
+    else:
+        full_msg = new_entry
     
     sheet.update_cell(row_idx, col_idx, full_msg)
+    
+    # ניקוי Cache כדי שנראה את העדכון מיד
     load_data.clear()
     return full_msg
 
 # --- פונקציות וואטסאפ (UltraMsg) ---
 
 def normalize_phone_for_api(phone_input):
-    """
-    מנרמל מספר לפורמט בינלאומי ללא פלוס (97250...)
-    """
     if not phone_input: return None
-    # משאיר רק ספרות
     digits = ''.join(filter(str.isdigit, str(phone_input)))
-    
     if not digits: return None
-    
-    # טיפול בקידומות
     if digits.startswith('972'):
-        return digits # כבר תקין
+        return digits 
     if digits.startswith('0'):
-        return '972' + digits[1:] # מוריד 0 מוסיף 972
-    
-    # אם זה מספר קצר בלי 0 ובלי 972 (כמו 501234567)
+        return '972' + digits[1:] 
     if len(digits) == 9:
         return '972' + digits
-        
-    return digits # מחזיר כמו שהוא אם לא הצלחנו לזהות
+    return digits 
 
 def send_whatsapp_message(phone, message_body):
     if "ultramsg" not in st.secrets:
@@ -278,7 +279,6 @@ if search_query:
                 log_val = str(row.get(LOG_COLUMN_NAME, ""))
                 original_idx = row.get('original_row_idx', 0)
                 
-                # שמירת המספר הגולמי עבור וואטסאפ (אנחנו צריכים אותו עם הקידומת המקורית אם אפשר)
                 raw_phone_for_wa = str(phone_raw).strip()
 
                 display_rows.append({
@@ -328,10 +328,9 @@ if search_query:
             
             allow_action = not rows_for_action.empty if not selected_indices.empty else False
 
-        # --- אזור כפתורים (3 עמודות: וואטסאפ, מייל סטטוס, מייל החזרה) ---
         col_wa, col_mail1, col_mail2 = st.columns([1.5, 1, 1])
         
-        # כפתור וואטסאפ (תופס קצת יותר מקום כי הטקסט ארוך)
+        # כפתור וואטסאפ
         with col_wa:
             if st.button("💬 שלח מדיניות החזרה"):
                 if not allow_action:
@@ -340,7 +339,6 @@ if search_query:
                     count_sent = 0
                     rows_to_update = []
                     
-                    # במקרה של שורה בודדת משתמשים ב-target_rows, אחרת במה שסומן
                     working_rows = target_rows if len(display_df) == 1 else rows_for_action
                     
                     for idx, row in working_rows.iterrows():
@@ -353,7 +351,6 @@ if search_query:
                         order_num = row['מספר הזמנה']
                         sku = row['מוצר']
                         
-                        # נוסח ההודעה המדויק
                         msg_body = f"""שלום {client_name},
 מדברים לגבי הזמנה {order_num} (מוצר: {sku}).
 הבנתי שיש בעיה במוצר או שאתה מעוניין להחזיר אותו.
@@ -376,7 +373,7 @@ if search_query:
                         time.sleep(1)
                         st.rerun()
 
-        # כפתורי מייל (כמו קודם)
+        # כפתורי מייל
         with col_mail1:
             if st.button("❓ מה קורה?"):
                 if not allow_action:
@@ -432,7 +429,7 @@ if search_query:
                         if send_custom_email(subject):
                             st.success(f"נשלח: {subject}")
 
-        # --- העתקה (למטה) ---
+        # --- העתקה ---
         st.divider()
         if not target_rows.empty:
             final_excel_lines = target_rows["_excel_line"].tolist()
