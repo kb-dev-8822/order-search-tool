@@ -224,9 +224,23 @@ if search_query:
 
     conditions = []
     
+    # פונקציית עזר לבדיקת התאמה להזמנה (מטפלת גם בפיצולים כמו -A)
+    def check_order_match(val, query):
+        val = str(val).strip()
+        # 1. התאמה מלאה (בול)
+        if val == query:
+            return True
+        # 2. אם יש מקף בערך בטבלה, נבדוק את מה שלפני המקף
+        if '-' in val:
+            parts = val.split('-')
+            # אם החלק הראשון (המספר) זהה למה שחיפשנו
+            if parts[0].strip() == query:
+                return True
+        return False
+
     if df.shape[1] > 0:
         col_orders = df.iloc[:, 0].astype(str).apply(clean_input_garbage)
-        mask_order = col_orders.str.startswith(clean_text_query)
+        mask_order = col_orders.apply(lambda x: check_order_match(x, clean_text_query))
         conditions.append(mask_order)
 
     if df.shape[1] > 8:
@@ -309,19 +323,17 @@ if search_query:
             disabled=["תאריך", "מספר הזמנה", "שם לקוח", "טלפון", "כתובת מלאה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME]
         )
 
-        # --- שינוי לוגיקה ליעילות: בחירה אוטומטית (Select All if None Selected) ---
+        # --- בחירה אוטומטית (אם לא נבחר כלום) ---
         selected_indices = edited_df[edited_df["בחר"] == True].index
 
         if selected_indices.empty:
-            # אם לא בחרת כלום -> הכוונה היא לכולם!
-            rows_for_action = display_df 
+            rows_for_action = display_df # לוקח את הכל
             is_implicit_select_all = True
         else:
-            # אם בחרת ספציפית -> רק מה שבחרת
-            rows_for_action = display_df.loc[selected_indices]
+            rows_for_action = display_df.loc[selected_indices] # לוקח רק מה שסומן
             is_implicit_select_all = False
             
-        # מנגנון הגנה: אם מנסים לשלוח ליותר מ-10 אנשים בבת אחת בלי לסמן ידנית
+        # אזהרת הצפה: אם מנסים לשלוח ליותר מ-10 ללא סימון ידני
         if is_implicit_select_all and len(rows_for_action) > 10:
             show_bulk_warning = True
         else:
@@ -329,19 +341,19 @@ if search_query:
 
         col_wa, col_mail1, col_mail2 = st.columns([1.5, 1, 1])
         
-        # כפתור וואטסאפ (עם לוגיקת קיבוץ - Grouping)
+        # כפתור וואטסאפ (עם איחוד הודעות)
         with col_wa:
             if show_bulk_warning:
                  st.warning(f"⚠️ יש {len(rows_for_action)} שורות. סמן ידנית.")
             else:
-                if st.button("💬 שלח מדיניות החזרה"):
+                if st.button("💬 שלח מדיניות החזרה/חוסרים"):
                     if rows_for_action.empty:
                         st.toast("⚠️ אין נתונים לשליחה")
                     else:
                         count_sent = 0
                         rows_to_update_log = []
                         
-                        # קיבוץ לפי מספר הזמנה + טלפון
+                        # קיבוץ: שולח הודעה אחת לכל הזמנה (גם אם יש לה כמה שורות)
                         grouped = rows_for_action.groupby(['מספר הזמנה', '_raw_phone'])
                         
                         for (order_num, phone), group in grouped:
@@ -379,7 +391,7 @@ if search_query:
                         time.sleep(1)
                         st.rerun()
 
-        # כפתורי מייל (סטטוס)
+        # כפתור מייל סטטוס (עם איחוד מספרי משלוח)
         with col_mail1:
             if show_bulk_warning:
                  st.warning("⚠️ סמן ידנית")
@@ -407,7 +419,7 @@ if search_query:
                         if not tracking_nums:
                             st.toast("⚠️ אין מספרי משלוח תקינים")
                         else:
-                            # הסרת כפילויות של מספרי משלוח
+                            # הסרת כפילויות ואיחוד למייל אחד
                             tracking_nums = list(set(tracking_nums))
                             joined_nums = ", ".join(tracking_nums)
                             subject = f"{joined_nums} מה קורה עם זה בבקשה?" if len(tracking_nums)==1 else f"{joined_nums} מה קורה עם אלה בבקשה?"
@@ -419,7 +431,7 @@ if search_query:
                                 time.sleep(1)
                                 st.rerun()
 
-        # כפתורי מייל (החזרה)
+        # כפתור מייל החזרה (עם איחוד מספרי משלוח)
         with col_mail2:
             if show_bulk_warning:
                  st.warning("⚠️ סמן ידנית")
