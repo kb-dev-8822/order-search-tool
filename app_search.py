@@ -224,16 +224,12 @@ if search_query:
 
     conditions = []
     
-    # פונקציית עזר לבדיקת התאמה להזמנה (מטפלת גם בפיצולים כמו -A)
     def check_order_match(val, query):
         val = str(val).strip()
-        # 1. התאמה מלאה (בול)
         if val == query:
             return True
-        # 2. אם יש מקף בערך בטבלה, נבדוק את מה שלפני המקף
         if '-' in val:
             parts = val.split('-')
-            # אם החלק הראשון (המספר) זהה למה שחיפשנו
             if parts[0].strip() == query:
                 return True
         return False
@@ -323,17 +319,15 @@ if search_query:
             disabled=["תאריך", "מספר הזמנה", "שם לקוח", "טלפון", "כתובת מלאה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME]
         )
 
-        # --- בחירה אוטומטית (אם לא נבחר כלום) ---
         selected_indices = edited_df[edited_df["בחר"] == True].index
 
         if selected_indices.empty:
-            rows_for_action = display_df # לוקח את הכל
+            rows_for_action = display_df 
             is_implicit_select_all = True
         else:
-            rows_for_action = display_df.loc[selected_indices] # לוקח רק מה שסומן
+            rows_for_action = display_df.loc[selected_indices]
             is_implicit_select_all = False
             
-        # אזהרת הצפה: אם מנסים לשלוח ליותר מ-10 ללא סימון ידני
         if is_implicit_select_all and len(rows_for_action) > 10:
             show_bulk_warning = True
         else:
@@ -341,7 +335,7 @@ if search_query:
 
         col_wa, col_mail1, col_mail2 = st.columns([1.5, 1, 1])
         
-        # כפתור וואטסאפ (עם איחוד הודעות)
+        # --- כפתור וואטסאפ (תיקון: קיבוץ לפי טלפון בלבד) ---
         with col_wa:
             if show_bulk_warning:
                  st.warning(f"⚠️ יש {len(rows_for_action)} שורות. סמן ידנית.")
@@ -353,21 +347,29 @@ if search_query:
                         count_sent = 0
                         rows_to_update_log = []
                         
-                        # קיבוץ: שולח הודעה אחת לכל הזמנה (גם אם יש לה כמה שורות)
-                        grouped = rows_for_action.groupby(['מספר הזמנה', '_raw_phone'])
+                        # השינוי: קיבוץ לפי טלפון בלבד (ולא גם לפי מספר הזמנה)
+                        grouped = rows_for_action.groupby('_raw_phone')
                         
-                        for (order_num, phone), group in grouped:
+                        for phone, group in grouped:
                             if not phone:
-                                st.toast(f"❌ אין טלפון להזמנה {order_num}")
+                                # נסה למצוא מספר הזמנה למטרת זיהוי בלוג השגיאות
+                                err_order = group.iloc[0]['מספר הזמנה']
+                                st.toast(f"❌ אין טלפון להזמנה {err_order}")
                                 continue
                             
+                            # איסוף כל מספרי ההזמנות הייחודיים של הלקוח הזה
+                            orders_list = group['מספר הזמנה'].unique()
+                            orders_str = ", ".join(orders_list)
+                            
+                            # איסוף כל המק"טים
                             skus_list = group['מוצר'].unique()
                             skus_str = ", ".join(skus_list)
                             
                             client_name = group.iloc[0]['שם לקוח'].split()[0] if group.iloc[0]['שם לקוח'] else "לקוח"
                             
+                            # נוסח מעודכן לריבוי הזמנות
                             msg_body = f"""שלום {client_name},
-מדברים לגבי הזמנה {order_num}.
+מדברים לגבי ההזמנות שלך: {orders_str}.
 מוצרים: {skus_str}.
 הבנתי שיש בעיה במוצר (פגום או חוסר בחלקים) או שאתה פשוט מעוניין להחזיר אותו.
 
@@ -391,7 +393,7 @@ if search_query:
                         time.sleep(1)
                         st.rerun()
 
-        # כפתור מייל סטטוס (עם איחוד מספרי משלוח)
+        # כפתור מייל סטטוס
         with col_mail1:
             if show_bulk_warning:
                  st.warning("⚠️ סמן ידנית")
@@ -419,7 +421,6 @@ if search_query:
                         if not tracking_nums:
                             st.toast("⚠️ אין מספרי משלוח תקינים")
                         else:
-                            # הסרת כפילויות ואיחוד למייל אחד
                             tracking_nums = list(set(tracking_nums))
                             joined_nums = ", ".join(tracking_nums)
                             subject = f"{joined_nums} מה קורה עם זה בבקשה?" if len(tracking_nums)==1 else f"{joined_nums} מה קורה עם אלה בבקשה?"
@@ -431,7 +432,7 @@ if search_query:
                                 time.sleep(1)
                                 st.rerun()
 
-        # כפתור מייל החזרה (עם איחוד מספרי משלוח)
+        # כפתור מייל החזרה
         with col_mail2:
             if show_bulk_warning:
                  st.warning("⚠️ סמן ידנית")
