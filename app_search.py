@@ -225,20 +225,21 @@ if search_query:
     conditions = []
     
     if df.shape[1] > 0:
-        # בדיקה מדויקת למספר הזמנה (Exact Match)
+        # לוגיקה חכמה להזמנות: התאמה מלאה או התחלה ב-X פלוס מקף
         col_orders = df.iloc[:, 0].astype(str).apply(clean_input_garbage)
-        mask_order = col_orders == clean_text_query 
+        # זה השינוי: תביא אם זה שווה בדיוק, או אם זה מתחיל במספר שחיפשתי ואחריו יש מקף
+        mask_order = col_orders.apply(lambda x: x == clean_text_query or x.startswith(clean_text_query + '-'))
         conditions.append(mask_order)
 
     if df.shape[1] > 8:
-        # בדיקה מדויקת למספר משלוח (Exact Match)
+        # משלוח - התאמה מלאה בלבד
         col_tracking = df.iloc[:, 8].astype(str).apply(clean_input_garbage)
         mask_tracking = col_tracking == clean_text_query
         conditions.append(mask_tracking)
 
     if df.shape[1] > 7:
         if clean_phone_query: 
-            # בדיקה מדויקת לטלפון (אחרי נרמול)
+            # טלפון - התאמה מלאה בלבד
             mask_phone = df.iloc[:, 7].astype(str).apply(normalize_phone) == clean_phone_query
             conditions.append(mask_phone)
 
@@ -314,16 +315,15 @@ if search_query:
 
         selected_indices = edited_df[edited_df["בחר"] == True].index
 
-        # --- לוגיקה חכמה לבחירה (Select All Logic) ---
+        # --- לוגיקה חכמה לבחירה ---
         
         if selected_indices.empty:
-            rows_for_action = display_df # לוקח הכל!
+            rows_for_action = display_df 
             is_implicit_select_all = True
         else:
             rows_for_action = display_df.loc[selected_indices]
             is_implicit_select_all = False
             
-        # בדיקת בטיחות: אם מנסים לשלוח ליותר מ-10 אנשים בבת אחת בלי לסמן
         if is_implicit_select_all and len(rows_for_action) > 10:
             show_bulk_warning = True
         else:
