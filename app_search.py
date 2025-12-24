@@ -224,11 +224,24 @@ if search_query:
 
     conditions = []
     
+    # פונקציית עזר לבדיקת התאמה להזמנה
+    def check_order_match(val, query):
+        val = str(val).strip()
+        # 1. התאמה מלאה (בול)
+        if val == query:
+            return True
+        # 2. אם יש מקף בערך בטבלה, נבדוק את מה שלפני המקף
+        if '-' in val:
+            parts = val.split('-')
+            # אם החלק הראשון (המספר) זהה למה שחיפשנו
+            if parts[0].strip() == query:
+                return True
+        return False
+
     if df.shape[1] > 0:
-        # לוגיקה חכמה להזמנות: התאמה מלאה או התחלה ב-X פלוס מקף
         col_orders = df.iloc[:, 0].astype(str).apply(clean_input_garbage)
-        # זה השינוי: תביא אם זה שווה בדיוק, או אם זה מתחיל במספר שחיפשתי ואחריו יש מקף
-        mask_order = col_orders.apply(lambda x: x == clean_text_query or x.startswith(clean_text_query + '-'))
+        # שימוש בפונקציה החדשה
+        mask_order = col_orders.apply(lambda x: check_order_match(x, clean_text_query))
         conditions.append(mask_order)
 
     if df.shape[1] > 8:
