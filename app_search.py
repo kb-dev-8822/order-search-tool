@@ -19,7 +19,7 @@ LOG_COLUMN_NAME = "לוג מיילים"
 
 # -------------------------------------------
 
-@st.cache_data
+@st.cache_data # ללא ttl - מקסימום מהירות
 def load_data():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     
@@ -52,7 +52,7 @@ def load_data():
         
     return df
 
-# --- Write-Back (מתוקן - מוסיף במקום לדרוס) ---
+# --- Write-Back ---
 def update_log_in_sheet(row_idx, message):
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     creds_dict = st.secrets["gcp_service_account"]
@@ -69,21 +69,17 @@ def update_log_in_sheet(row_idx, message):
         col_idx = len(headers) + 1
         sheet.update_cell(1, col_idx, LOG_COLUMN_NAME)
         
-    # קריאת הערך הקיים כדי לא לדרוס אותו
     current_val = sheet.cell(row_idx, col_idx).value or ""
     
     timestamp = datetime.now().strftime("%d/%m %H:%M")
     new_entry = f"{message} ({timestamp})"
     
-    # אם יש כבר תוכן, נוסיף קו מפריד. אם לא, נכתוב ישר.
     if current_val:
         full_msg = f"{current_val} | {new_entry}"
     else:
         full_msg = new_entry
     
     sheet.update_cell(row_idx, col_idx, full_msg)
-    
-    # ניקוי Cache כדי שנראה את העדכון מיד
     load_data.clear()
     return full_msg
 
@@ -330,29 +326,37 @@ if search_query:
 
         col_wa, col_mail1, col_mail2 = st.columns([1.5, 1, 1])
         
-        # כפתור וואטסאפ
+        # כפתור וואטסאפ (עם לוגיקת קיבוץ - Grouping)
         with col_wa:
             if st.button("💬 שלח מדיניות החזרה"):
                 if not allow_action:
                     st.toast("⚠️ יש לסמן שורה (כשיש מספר תוצאות)")
                 else:
                     count_sent = 0
-                    rows_to_update = []
+                    rows_to_update_log = []
                     
                     working_rows = target_rows if len(display_df) == 1 else rows_for_action
                     
-                    for idx, row in working_rows.iterrows():
-                        phone = row['_raw_phone']
-                        if not phone:
-                            st.toast(f"❌ אין טלפון להזמנה {row['מספר הזמנה']}")
-                            continue
-                            
-                        client_name = row['שם לקוח'].split()[0] if row['שם לקוח'] else "לקוח"
-                        order_num = row['מספר הזמנה']
-                        sku = row['מוצר']
+                    # בדיקה שיש שורות לעבוד עליהן
+                    if not working_rows.empty:
+                        # קיבוץ לפי מספר הזמנה + טלפון (כדי לאחד מק"טים)
+                        grouped = working_rows.groupby(['מספר הזמנה', '_raw_phone'])
                         
-                        msg_body = f"""שלום {client_name},
-מדברים לגבי הזמנה {order_num} (מוצר: {sku}).
+                        for (order_num, phone), group in grouped:
+                            if not phone:
+                                st.toast(f"❌ אין טלפון להזמנה {order_num}")
+                                continue
+                            
+                            # איסוף כל המק"טים של ההזמנה הזאת לרשימה אחת
+                            skus_list = group['מוצר'].unique()
+                            skus_str = ", ".join(skus_list)
+                            
+                            client_name = group.iloc[0]['שם לקוח'].split()[0] if group.iloc[0]['שם לקוח'] else "לקוח"
+                            
+                            # נוסח ההודעה המאוחד
+                            msg_body = f"""שלום {client_name},
+מדברים לגבי הזמנה {order_num}.
+מוצרים: {skus_str}.
 הבנתי שיש בעיה במוצר או שאתה מעוניין להחזיר אותו.
 
 שים לב לנהלי ההחזרה:
@@ -361,19 +365,21 @@ if search_query:
 2. אם זה *מוצר פגום* - אנא שלח לנו תמונות ברורות של הפגמים, ונציג מטעמנו יחזור אליך לגבי המשך הטיפול (עד 3 ימי עסקים).
 
 תודה!"""
-                        
-                        if send_whatsapp_message(phone, msg_body):
-                            count_sent += 1
-                            rows_to_update.append(row['_original_row'])
-                            st.toast(f"נשלח וואטסאפ ל-{client_name} ✅")
+                            
+                            # שליחה אחת לכל קבוצה (הזמנה)
+                            if send_whatsapp_message(phone, msg_body):
+                                count_sent += 1
+                                # אוסף את כל השורות המקוריות של ההזמנה הזאת לעדכון לוג
+                                rows_to_update_log.extend(group['_original_row'].tolist())
+                                st.toast(f"נשלח וואטסאפ מרוכז ל-{client_name} ✅")
                     
                     if count_sent > 0:
-                        for r_idx in rows_to_update:
+                        for r_idx in rows_to_update_log:
                             update_log_in_sheet(r_idx, "💬 נשלח ווצאפ החזרה")
                         time.sleep(1)
                         st.rerun()
 
-        # כפתורי מייל
+        # כפתורי מייל (ללא שינוי)
         with col_mail1:
             if st.button("❓ מה קורה?"):
                 if not allow_action:
@@ -442,4 +448,3 @@ if search_query:
         
     else:
         st.warning(f"לא נמצאו תוצאות עבור: {clean_text_query}")
-
