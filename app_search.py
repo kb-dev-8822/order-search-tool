@@ -401,7 +401,7 @@ if search_query:
                             msg_body = f"""היי {client_name},
 חוזרים אלייך מסלימפרייס לגבי הזמנה/ות: {orders_str}
 מוצרים: {skus_str}
-סטטוס: {tracking_str}
+מס משלוח/ים: {tracking_str}
 
 קיבלנו פנייה שחיפשת אותנו, איך אפשר לעזור?"""
                             
@@ -489,3 +489,4 @@ if search_query:
         
     else:
         st.warning(f"לא נמצאו תוצאות עבור: {clean_text_query}")
+
