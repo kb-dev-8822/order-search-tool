@@ -479,13 +479,13 @@ if search_query:
         # --- העתקה (פתוח תמיד) ---
         st.divider()
         if not rows_for_action.empty and not show_bulk_warning:
+            final_excel_lines = rows_for_action["_excel_line"].tolist()
+            st.caption("העתקה לאקסל (שורות נבחרות):")
+            st.code("\n".join(final_excel_lines), language="csv")
+            
             final_text_lines = rows_for_action["_text_line"].tolist()
             st.caption("📝 פרטים מלאים להעתקה:")
             st.code("\n".join(final_text_lines), language=None)
-            
-            # אם תרצה גם את האקסל:
-            # final_excel_lines = rows_for_action["_excel_line"].tolist()
-            # st.code("\n".join(final_excel_lines), language="csv")
         
     else:
         st.warning(f"לא נמצאו תוצאות עבור: {clean_text_query}")
