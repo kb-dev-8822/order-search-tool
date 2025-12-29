@@ -333,43 +333,29 @@ if search_query:
         else:
             show_bulk_warning = False
 
-        col_wa, col_mail1, col_mail2 = st.columns([1.5, 1, 1])
+        # --- אזור הכפתורים (4 עמודות) ---
+        col_wa_policy, col_wa_contact, col_mail_status, col_mail_return = st.columns([1.2, 1.2, 0.8, 0.8])
         
-        # --- כפתור וואטסאפ (תיקון: קיבוץ לפי טלפון בלבד) ---
-        with col_wa:
+        # 1. וואטסאפ מדיניות
+        with col_wa_policy:
             if show_bulk_warning:
-                 st.warning(f"⚠️ יש {len(rows_for_action)} שורות. סמן ידנית.")
+                 st.warning("⚠️ סמן ידנית")
             else:
-                if st.button("💬 שלח מדיניות החזרה/חוסרים"):
+                if st.button("💬 שלח מדיניות"):
                     if rows_for_action.empty:
-                        st.toast("⚠️ אין נתונים לשליחה")
+                        st.toast("⚠️ אין נתונים")
                     else:
                         count_sent = 0
                         rows_to_update_log = []
-                        
-                        # השינוי: קיבוץ לפי טלפון בלבד (ולא גם לפי מספר הזמנה)
                         grouped = rows_for_action.groupby('_raw_phone')
-                        
                         for phone, group in grouped:
-                            if not phone:
-                                # נסה למצוא מספר הזמנה למטרת זיהוי בלוג השגיאות
-                                err_order = group.iloc[0]['מספר הזמנה']
-                                st.toast(f"❌ אין טלפון להזמנה {err_order}")
-                                continue
-                            
-                            # איסוף כל מספרי ההזמנות הייחודיים של הלקוח הזה
-                            orders_list = group['מספר הזמנה'].unique()
-                            orders_str = ", ".join(orders_list)
-                            
-                            # איסוף כל המק"טים
-                            skus_list = group['מוצר'].unique()
-                            skus_str = ", ".join(skus_list)
-                            
+                            if not phone: continue
+                            orders_str = ", ".join(group['מספר הזמנה'].unique())
+                            skus_str = ", ".join(group['מוצר'].unique())
                             client_name = group.iloc[0]['שם לקוח'].split()[0] if group.iloc[0]['שם לקוח'] else "לקוח"
                             
-                            # נוסח מעודכן לריבוי הזמנות
                             msg_body = f"""שלום {client_name},
-מדברים לגבי הזמנה/ות שלך: {orders_str}.
+מדברים לגבי הזמנה/ות: {orders_str}.
 מוצרים: {skus_str}.
 הבנתי שיש בעיה במוצר/ים (פגם או חוסר בחלקים) או שאתה פשוט מעוניין להחזיר.
 
@@ -381,20 +367,57 @@ if search_query:
 3. במידה ו*חסרים חלקים* - נא לשלוח לנו את מספרי החלקים החסרים במדויק לפי דף ההוראות (מופיע בחוברת ההרכבה), ונדאג להשלים לך אותם.
 
 תודה!"""
+                            if send_whatsapp_message(phone, msg_body):
+                                count_sent += 1
+                                rows_to_update_log.extend(group['_original_row'].tolist())
+                                st.toast(f"נשלח ל-{client_name} ✅")
+                        
+                        if count_sent > 0:
+                            for r_idx in rows_to_update_log:
+                                update_log_in_sheet(r_idx, "💬 נשלח ווצאפ מדיניות")
+                            time.sleep(1)
+                            st.rerun()
+
+        # 2. וואטסאפ "חזרנו אליך" (החדש)
+        with col_wa_contact:
+            if show_bulk_warning:
+                 st.warning("⚠️ סמן ידנית")
+            else:
+                if st.button("📞 חזרנו אליך"):
+                    if rows_for_action.empty:
+                        st.toast("⚠️ אין נתונים")
+                    else:
+                        count_sent = 0
+                        rows_to_update_log = []
+                        grouped = rows_for_action.groupby('_raw_phone')
+                        for phone, group in grouped:
+                            if not phone: continue
+                            
+                            orders_str = ", ".join(group['מספר הזמנה'].unique())
+                            skus_str = ", ".join(group['מוצר'].unique())
+                            tracking_str = ", ".join(group['סטטוס משלוח'].unique())
+                            client_name = group.iloc[0]['שם לקוח'].split()[0] if group.iloc[0]['שם לקוח'] else "לקוח"
+                            
+                            msg_body = f"""היי {client_name},
+חוזרים אלייך מסלימפרייס לגבי הזמנה/ות: {orders_str}
+מוצרים: {skus_str}
+סטטוס: {tracking_str}
+
+קיבלנו פנייה שחיפשת אותנו, איך אפשר לעזור?"""
                             
                             if send_whatsapp_message(phone, msg_body):
                                 count_sent += 1
                                 rows_to_update_log.extend(group['_original_row'].tolist())
-                                st.toast(f"נשלח וואטסאפ מרוכז ל-{client_name} ✅")
-                    
-                    if count_sent > 0:
-                        for r_idx in rows_to_update_log:
-                            update_log_in_sheet(r_idx, "💬 נשלח ווצאפ החזרה")
-                        time.sleep(1)
-                        st.rerun()
+                                st.toast(f"נשלח ל-{client_name} ✅")
+                        
+                        if count_sent > 0:
+                            for r_idx in rows_to_update_log:
+                                update_log_in_sheet(r_idx, "💬 נשלח 'חזרנו אליך'")
+                            time.sleep(1)
+                            st.rerun()
 
-        # כפתור מייל סטטוס
-        with col_mail1:
+        # 3. מייל סטטוס
+        with col_mail_status:
             if show_bulk_warning:
                  st.warning("⚠️ סמן ידנית")
             else:
@@ -405,7 +428,6 @@ if search_query:
                         tracking_nums = []
                         rows_to_update = []
                         duplicate_alert = False
-                        
                         for idx, row in rows_for_action.iterrows():
                             tn = row['סטטוס משלוח']
                             if "נשלח בדיקה" in str(row[LOG_COLUMN_NAME]):
@@ -415,16 +437,15 @@ if search_query:
                                 rows_to_update.append(row['_original_row'])
                         
                         if duplicate_alert:
-                            st.toast("⚠️ שים לב: כבר נשלח מייל בעבר")
+                            st.toast("⚠️ שים לב: כבר נשלח בעבר")
                             time.sleep(1)
 
                         if not tracking_nums:
-                            st.toast("⚠️ אין מספרי משלוח תקינים")
+                            st.toast("⚠️ אין מספרי משלוח")
                         else:
                             tracking_nums = list(set(tracking_nums))
                             joined_nums = ", ".join(tracking_nums)
                             subject = f"{joined_nums} מה קורה עם זה בבקשה?" if len(tracking_nums)==1 else f"{joined_nums} מה קורה עם אלה בבקשה?"
-                            
                             if send_custom_email(subject):
                                 st.success(f"נשלח: {subject}")
                                 for r_idx in rows_to_update:
@@ -432,8 +453,8 @@ if search_query:
                                 time.sleep(1)
                                 st.rerun()
 
-        # כפתור מייל החזרה
-        with col_mail2:
+        # 4. מייל החזרה
+        with col_mail_return:
             if show_bulk_warning:
                  st.warning("⚠️ סמן ידנית")
             else:
@@ -446,7 +467,6 @@ if search_query:
                             tn = row['סטטוס משלוח']
                             if tn and tn != "התקנה":
                                 tracking_nums.append(tn)
-                        
                         if not tracking_nums:
                             st.toast("⚠️ אין מספרי משלוח")
                         else:
@@ -456,17 +476,16 @@ if search_query:
                             if send_custom_email(subject):
                                 st.success(f"נשלח: {subject}")
 
-        # --- העתקה ---
+        # --- העתקה (פתוח תמיד) ---
         st.divider()
         if not rows_for_action.empty and not show_bulk_warning:
-            final_excel_lines = rows_for_action["_excel_line"].tolist()
-            st.caption("העתקה לאקסל (שורות נבחרות):")
-            st.code("\n".join(final_excel_lines), language="csv")
-            
             final_text_lines = rows_for_action["_text_line"].tolist()
-            with st.expander("📝 פרטים מלאים (טקסט)"):
-                st.code("\n".join(final_text_lines), language=None)
+            st.caption("📝 פרטים מלאים להעתקה:")
+            st.code("\n".join(final_text_lines), language=None)
+            
+            # אם תרצה גם את האקסל:
+            # final_excel_lines = rows_for_action["_excel_line"].tolist()
+            # st.code("\n".join(final_excel_lines), language="csv")
         
     else:
         st.warning(f"לא נמצאו תוצאות עבור: {clean_text_query}")
-
