@@ -17,19 +17,13 @@ SPREADSHEET_ID = '1xUABIGIhnLxO2PYrpAOXZdk48Q-hNYOHkht2vUyaVdE'
 WORKSHEET_NAME = "הזמנות"
 LOG_COLUMN_NAME = "לוג מיילים"
 
-# --- טעינת כתובות מייל ומספרים מהסודות ---
+# --- טעינת כתובות מייל מהסודות ---
 if "suppliers" in st.secrets:
     EMAIL_ACE = st.secrets["suppliers"].get("ace_email")
     EMAIL_PAYNGO = st.secrets["suppliers"].get("payngo_email")
 else:
     EMAIL_ACE = None
     EMAIL_PAYNGO = None
-
-# טעינת טלפון מתקין (עם ברירת מחדל אם לא הוגדר)
-if "ultramsg" in st.secrets:
-    INSTALLATION_PHONE = st.secrets["ultramsg"].get("installation_phone", "0528448382")
-else:
-    INSTALLATION_PHONE = "0528448382"
 
 # -------------------------------------------
 
@@ -321,16 +315,23 @@ if search_query:
             except IndexError: continue
         
         display_df = pd.DataFrame(display_rows)
-        # --- צמצום עמודות (בדיוק לפי הקובץ ששלחת עם תוספת 'כמות' שרצית קודם) ---
-        cols_order = ["מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME, "בחר"]
+        
+        # --- סידור עמודות בסדר הפוך (שמאל לימין) כדי שיוצג נכון מימין לשמאל ---
+        # לוג (שמאל) -> סטטוס -> מוצר -> כמות -> הזמנה -> בחר (ימין)
+        cols_order = [LOG_COLUMN_NAME, "סטטוס משלוח", "מוצר", "כמות", "מספר הזמנה", "בחר"]
         
         edited_df = st.data_editor(
             display_df[cols_order],
-            use_container_width=True,
+            use_container_width=False,  
             hide_index=True,
             column_config={
-                "בחר": st.column_config.CheckboxColumn("בחר", default=False),
-                LOG_COLUMN_NAME: st.column_config.TextColumn("לוג", disabled=True)
+                "בחר": st.column_config.CheckboxColumn("בחר", default=False, width="small"),
+                "מספר הזמנה": st.column_config.TextColumn("מספר הזמנה", width="medium"),
+                "כמות": st.column_config.TextColumn("כמות", width="small"),
+                "מוצר": st.column_config.TextColumn("מוצר", width="large"),
+                # כאן שינינו את הכותרת לתצוגה בלבד
+                "סטטוס משלוח": st.column_config.TextColumn("מס משלוח", width="medium"),
+                LOG_COLUMN_NAME: st.column_config.TextColumn("לוג", disabled=True, width="large")
             },
             disabled=["מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME]
         )
@@ -349,14 +350,14 @@ if search_query:
         else:
             show_bulk_warning = False
 
-        # --- אזור הכפתורים (6 עמודות צפופות עם gap=small) ---
-        col_wa_policy, col_wa_contact, col_wa_install, col_mail_status, col_mail_return, col_mail_supplier = st.columns(6, gap="small")
+        # --- אזור הכפתורים ---
+        col_wa_policy, col_wa_contact, col_mail_status, col_mail_return, col_mail_supplier = st.columns([1.1, 1.1, 0.7, 0.7, 1.1])
         
         # 1. וואטסאפ מדיניות
         with col_wa_policy:
             if show_bulk_warning: st.warning("⚠️ סמן ידנית")
             else:
-                if st.button("💬 מדיניות"):
+                if st.button("💬 שלח מדיניות"):
                     if rows_for_action.empty: st.toast("⚠️ אין נתונים")
                     else:
                         count_sent = 0
@@ -420,46 +421,7 @@ if search_query:
                             time.sleep(1)
                             st.rerun()
 
-        # 3. וואטסאפ התקנה (החדש!)
-        with col_wa_install:
-            if show_bulk_warning: st.warning("⚠️ סמן ידנית")
-            else:
-                if st.button("🔧 התקנה"):
-                    if rows_for_action.empty: st.toast("⚠️ אין נתונים")
-                    else:
-                        rows_to_update_log = []
-                        # קיבוץ לפי מספר הזמנה כדי לאחד מקטים
-                        grouped = rows_for_action.groupby('מספר הזמנה')
-                        all_messages = []
-                        
-                        for order_num, group in grouped:
-                            first_row = group.iloc[0]
-                            name = first_row['שם לקוח']
-                            address = first_row['כתובת מלאה']
-                            phone = first_row['טלפון']
-                            
-                            # איחוד מקטים: כמות X מקט
-                            items_list = []
-                            for _, r in group.iterrows():
-                                items_list.append(f"{r['כמות']} X {r['מוצר']}")
-                            items_str = ", ".join(items_list)
-                            
-                            # שורת ההודעה הסופית
-                            line = f"{order_num} | {items_str} | {name} | {address} | {phone} | התקנה"
-                            all_messages.append(line)
-                            
-                            rows_to_update_log.extend(group['_original_row'].tolist())
-                        
-                        # איחוד כל השורות להודעה אחת
-                        final_msg = "\n\n".join(all_messages)
-                        
-                        if send_whatsapp_message(INSTALLATION_PHONE, final_msg):
-                            st.toast("נשלח למתקין ✅")
-                            for r_idx in rows_to_update_log: update_log_in_sheet(r_idx, "💬 נשלח למתקין")
-                            time.sleep(1)
-                            st.rerun()
-
-        # 4. מייל סטטוס
+        # 3. מייל סטטוס
         with col_mail_status:
             if show_bulk_warning: st.warning("⚠️ סמן ידנית")
             else:
@@ -489,7 +451,7 @@ if search_query:
                                 time.sleep(1)
                                 st.rerun()
 
-        # 5. מייל החזרה
+        # 4. מייל החזרה
         with col_mail_return:
             if show_bulk_warning: st.warning("⚠️ סמן ידנית")
             else:
@@ -508,11 +470,11 @@ if search_query:
                             if send_custom_email(subject, body_text=""):
                                 st.success(f"נשלח: {subject}")
 
-        # 6. כפתור מייל ספקים (אין מענה)
+        # 5. כפתור מייל ספקים (אין מענה)
         with col_mail_supplier:
             if show_bulk_warning: st.warning("⚠️ סמן ידנית")
             else:
-                if st.button("📞 אין מענה"):
+                if st.button("📞 אין מענה - ספקים"):
                     if rows_for_action.empty: st.toast("⚠️ אין נתונים")
                     else:
                         ace_data = {"orders": [], "tracking": [], "phones": [], "rows": []}
