@@ -548,3 +548,4 @@ if search_query:
         
     else:
         st.warning(f"לא נמצאו תוצאות עבור: {clean_text_query}")
+
