@@ -315,20 +315,22 @@ if search_query:
             except IndexError: continue
         
         display_df = pd.DataFrame(display_rows)
-        # --- צמצום ועיצוב רוחב עמודות (AutoFit) ---
-        cols_order = ["מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME, "בחר"]
+        
+        # --- סידור עמודות בסדר הפוך (שמאל לימין) כדי שיוצג נכון מימין לשמאל ---
+        # לוג (שמאל) -> סטטוס -> מוצר -> כמות -> הזמנה -> בחר (ימין)
+        cols_order = [LOG_COLUMN_NAME, "סטטוס משלוח", "מוצר", "כמות", "מספר הזמנה", "בחר"]
         
         edited_df = st.data_editor(
             display_df[cols_order],
-            # המפתח לשינוי: ביטול מתיחת הטבלה לכל הרוחב
             use_container_width=False,  
             hide_index=True,
             column_config={
                 "בחר": st.column_config.CheckboxColumn("בחר", default=False, width="small"),
-                "כמות": st.column_config.TextColumn("כמות", width="small"),
                 "מספר הזמנה": st.column_config.TextColumn("מספר הזמנה", width="medium"),
-                "סטטוס משלוח": st.column_config.TextColumn("סטטוס משלוח", width="medium"),
+                "כמות": st.column_config.TextColumn("כמות", width="small"),
                 "מוצר": st.column_config.TextColumn("מוצר", width="large"),
+                # כאן שינינו את הכותרת לתצוגה בלבד
+                "סטטוס משלוח": st.column_config.TextColumn("מס משלוח", width="medium"),
                 LOG_COLUMN_NAME: st.column_config.TextColumn("לוג", disabled=True, width="large")
             },
             disabled=["מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME]
@@ -348,7 +350,7 @@ if search_query:
         else:
             show_bulk_warning = False
 
-        # --- אזור הכפתורים (5 עמודות) ---
+        # --- אזור הכפתורים ---
         col_wa_policy, col_wa_contact, col_mail_status, col_mail_return, col_mail_supplier = st.columns([1.1, 1.1, 0.7, 0.7, 1.1])
         
         # 1. וואטסאפ מדיניות
