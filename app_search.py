@@ -188,15 +188,43 @@ def clean_input_garbage(val):
 # --- עיצוב CSS ---
 st.markdown("""
 <style>
+    /* הגדרות כלליות לאפליקציה */
     .stApp { direction: rtl; }
-    .stMarkdown, h1, h3, h2, p, label, .stRadio { text-align: right !important; direction: rtl !important; }
-    .stTextInput input { direction: rtl; text-align: right; }
     
-    div[data-testid="stDataEditor"] th { text-align: right !important; direction: rtl !important; }
-    div[data-testid="stDataEditor"] td { text-align: right !important; direction: rtl !important; }
-    div[class*="stDataEditor"] div[role="columnheader"] { justify-content: flex-end; }
-    div[class*="stDataEditor"] div[role="gridcell"] { text-align: right; direction: rtl; justify-content: flex-end; }
+    /* יישור טקסט וכיוון כללי */
+    .stMarkdown, h1, h3, h2, p, label, .stRadio { 
+        text-align: right !important; 
+        direction: rtl !important; 
+    }
     
+    /* יישור שדות קלט */
+    .stTextInput input { 
+        direction: rtl; 
+        text-align: right; 
+    }
+    
+    /* --- הגדרות אגרסיביות לטבלה (DataEditor) --- */
+    
+    /* כותרות הטבלה - יישור לימין */
+    div[data-testid="stDataEditor"] div[role="columnheader"] {
+        justify-content: flex-end !important;
+        text-align: right !important;
+        direction: rtl !important;
+    }
+    
+    /* תוכן התאים - יישור לימין */
+    div[data-testid="stDataEditor"] div[role="gridcell"] {
+        justify-content: flex-end !important;
+        text-align: right !important;
+        direction: rtl !important;
+    }
+    
+    /* לוודא שהטקסט בתוך התא גם מיושר */
+    div[data-testid="stDataEditor"] div[role="gridcell"] > div {
+        text-align: right !important;
+        justify-content: flex-end !important;
+    }
+
     code { text-align: right !important; white-space: pre-wrap !important; direction: rtl !important; }
     
     .stButton button {
@@ -316,8 +344,7 @@ if search_query:
         
         display_df = pd.DataFrame(display_rows)
         
-        # --- סידור עמודות בסדר הפוך (שמאל לימין) כדי שיוצג נכון מימין לשמאל ---
-        # לוג (שמאל) -> סטטוס -> מוצר -> כמות -> הזמנה -> בחר (ימין)
+        # סדר העמודות (הפוך לתצוגה)
         cols_order = [LOG_COLUMN_NAME, "סטטוס משלוח", "מוצר", "כמות", "מספר הזמנה", "בחר"]
         
         edited_df = st.data_editor(
@@ -329,7 +356,6 @@ if search_query:
                 "מספר הזמנה": st.column_config.TextColumn("מספר הזמנה", width="medium"),
                 "כמות": st.column_config.TextColumn("כמות", width="small"),
                 "מוצר": st.column_config.TextColumn("מוצר", width="large"),
-                # כאן שינינו את הכותרת לתצוגה בלבד
                 "סטטוס משלוח": st.column_config.TextColumn("מס משלוח", width="medium"),
                 LOG_COLUMN_NAME: st.column_config.TextColumn("לוג", disabled=True, width="large")
             },
