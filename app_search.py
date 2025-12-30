@@ -17,6 +17,15 @@ SPREADSHEET_ID = '1xUABIGIhnLxO2PYrpAOXZdk48Q-hNYOHkht2vUyaVdE'
 WORKSHEET_NAME = "הזמנות"
 LOG_COLUMN_NAME = "לוג מיילים"
 
+# --- טעינת כתובות מייל מהסודות (ללא ברירת מחדל בקוד) ---
+# אם לא מוגדר בסודות - המשתנים יהיו None ולא יישלח מייל
+if "suppliers" in st.secrets:
+    EMAIL_ACE = st.secrets["suppliers"].get("ace_email")
+    EMAIL_PAYNGO = st.secrets["suppliers"].get("payngo_email")
+else:
+    EMAIL_ACE = None
+    EMAIL_PAYNGO = None
+
 # -------------------------------------------
 
 @st.cache_data # ללא ttl - מקסימום מהירות
@@ -131,20 +140,22 @@ def send_whatsapp_message(phone, message_body):
 
 # --- פונקציות מייל ---
 
-def send_custom_email(subject_line):
+def send_custom_email(subject_line, body_text="", target_email=None):
     if "email" not in st.secrets:
         st.error("חסרות הגדרות אימייל ב-Secrets.")
         return False
 
     sender = st.secrets["email"]["sender_address"]
     password = st.secrets["email"]["password"]
-    recipient = st.secrets["email"]["recipient_address"]
+    
+    # אם הועבר יעד ספציפי - השתמש בו, אחרת קח את ברירת המחדל מהסודות
+    recipient = target_email if target_email else st.secrets["email"]["recipient_address"]
 
     msg = MIMEMultipart()
     msg['From'] = sender
     msg['To'] = recipient
     msg['Subject'] = subject_line
-    msg.attach(MIMEText("", 'plain', 'utf-8'))
+    msg.attach(MIMEText(body_text, 'plain', 'utf-8'))
 
     try:
         server = smtplib.SMTP('smtp.gmail.com', 587)
@@ -333,17 +344,15 @@ if search_query:
         else:
             show_bulk_warning = False
 
-        # --- אזור הכפתורים (4 עמודות) ---
-        col_wa_policy, col_wa_contact, col_mail_status, col_mail_return = st.columns([1.2, 1.2, 0.8, 0.8])
+        # --- אזור הכפתורים (5 עמודות) ---
+        col_wa_policy, col_wa_contact, col_mail_status, col_mail_return, col_mail_supplier = st.columns([1.1, 1.1, 0.7, 0.7, 1.1])
         
         # 1. וואטסאפ מדיניות
         with col_wa_policy:
-            if show_bulk_warning:
-                 st.warning("⚠️ סמן ידנית")
+            if show_bulk_warning: st.warning("⚠️ סמן ידנית")
             else:
                 if st.button("💬 שלח מדיניות"):
-                    if rows_for_action.empty:
-                        st.toast("⚠️ אין נתונים")
+                    if rows_for_action.empty: st.toast("⚠️ אין נתונים")
                     else:
                         count_sent = 0
                         rows_to_update_log = []
@@ -353,7 +362,6 @@ if search_query:
                             orders_str = ", ".join(group['מספר הזמנה'].unique())
                             skus_str = ", ".join(group['מוצר'].unique())
                             client_name = group.iloc[0]['שם לקוח'].split()[0] if group.iloc[0]['שם לקוח'] else "לקוח"
-                            
                             msg_body = f"""שלום {client_name},
 מדברים לגבי הזמנה/ות: {orders_str}.
 מוצרים: {skus_str}.
@@ -371,110 +379,161 @@ if search_query:
                                 count_sent += 1
                                 rows_to_update_log.extend(group['_original_row'].tolist())
                                 st.toast(f"נשלח ל-{client_name} ✅")
-                        
                         if count_sent > 0:
-                            for r_idx in rows_to_update_log:
-                                update_log_in_sheet(r_idx, "💬 נשלח ווצאפ מדיניות")
+                            for r_idx in rows_to_update_log: update_log_in_sheet(r_idx, "💬 נשלח ווצאפ מדיניות")
                             time.sleep(1)
                             st.rerun()
 
-        # 2. וואטסאפ "חזרנו אליך" (החדש)
+        # 2. וואטסאפ "חזרנו אליך"
         with col_wa_contact:
-            if show_bulk_warning:
-                 st.warning("⚠️ סמן ידנית")
+            if show_bulk_warning: st.warning("⚠️ סמן ידנית")
             else:
                 if st.button("📞 חזרנו אליך"):
-                    if rows_for_action.empty:
-                        st.toast("⚠️ אין נתונים")
+                    if rows_for_action.empty: st.toast("⚠️ אין נתונים")
                     else:
                         count_sent = 0
                         rows_to_update_log = []
                         grouped = rows_for_action.groupby('_raw_phone')
                         for phone, group in grouped:
                             if not phone: continue
-                            
                             orders_str = ", ".join(group['מספר הזמנה'].unique())
                             skus_str = ", ".join(group['מוצר'].unique())
                             tracking_str = ", ".join(group['סטטוס משלוח'].unique())
                             client_name = group.iloc[0]['שם לקוח'].split()[0] if group.iloc[0]['שם לקוח'] else "לקוח"
-                            
                             msg_body = f"""היי {client_name},
 חוזרים אלייך מסלימפרייס לגבי הזמנה/ות: {orders_str}
 מוצרים: {skus_str}
 מס משלוח/ים: {tracking_str}
 
 קיבלנו פנייה שחיפשת אותנו, איך אפשר לעזור?"""
-                            
                             if send_whatsapp_message(phone, msg_body):
                                 count_sent += 1
                                 rows_to_update_log.extend(group['_original_row'].tolist())
                                 st.toast(f"נשלח ל-{client_name} ✅")
-                        
                         if count_sent > 0:
-                            for r_idx in rows_to_update_log:
-                                update_log_in_sheet(r_idx, "💬 נשלח 'חזרנו אליך'")
+                            for r_idx in rows_to_update_log: update_log_in_sheet(r_idx, "💬 נשלח 'חזרנו אליך'")
                             time.sleep(1)
                             st.rerun()
 
         # 3. מייל סטטוס
         with col_mail_status:
-            if show_bulk_warning:
-                 st.warning("⚠️ סמן ידנית")
+            if show_bulk_warning: st.warning("⚠️ סמן ידנית")
             else:
                 if st.button("❓ מה קורה?"):
-                    if rows_for_action.empty:
-                        st.toast("⚠️ אין נתונים")
+                    if rows_for_action.empty: st.toast("⚠️ אין נתונים")
                     else:
                         tracking_nums = []
                         rows_to_update = []
                         duplicate_alert = False
                         for idx, row in rows_for_action.iterrows():
                             tn = row['סטטוס משלוח']
-                            if "נשלח בדיקה" in str(row[LOG_COLUMN_NAME]):
-                                duplicate_alert = True
+                            if "נשלח בדיקה" in str(row[LOG_COLUMN_NAME]): duplicate_alert = True
                             if tn and tn != "התקנה":
                                 tracking_nums.append(tn)
                                 rows_to_update.append(row['_original_row'])
-                        
                         if duplicate_alert:
                             st.toast("⚠️ שים לב: כבר נשלח בעבר")
                             time.sleep(1)
-
-                        if not tracking_nums:
-                            st.toast("⚠️ אין מספרי משלוח")
+                        if not tracking_nums: st.toast("⚠️ אין מספרי משלוח")
                         else:
                             tracking_nums = list(set(tracking_nums))
                             joined_nums = ", ".join(tracking_nums)
                             subject = f"{joined_nums} מה קורה עם זה בבקשה?" if len(tracking_nums)==1 else f"{joined_nums} מה קורה עם אלה בבקשה?"
-                            if send_custom_email(subject):
+                            if send_custom_email(subject, body_text=""):
                                 st.success(f"נשלח: {subject}")
-                                for r_idx in rows_to_update:
-                                    update_log_in_sheet(r_idx, "📧 נשלח בדיקה")
+                                for r_idx in rows_to_update: update_log_in_sheet(r_idx, "📧 נשלח בדיקה")
                                 time.sleep(1)
                                 st.rerun()
 
         # 4. מייל החזרה
         with col_mail_return:
-            if show_bulk_warning:
-                 st.warning("⚠️ סמן ידנית")
+            if show_bulk_warning: st.warning("⚠️ סמן ידנית")
             else:
                 if st.button("↩️ להחזיר"):
-                    if rows_for_action.empty:
-                        st.toast("⚠️ אין נתונים")
+                    if rows_for_action.empty: st.toast("⚠️ אין נתונים")
                     else:
                         tracking_nums = []
                         for idx, row in rows_for_action.iterrows():
                             tn = row['סטטוס משלוח']
-                            if tn and tn != "התקנה":
-                                tracking_nums.append(tn)
-                        if not tracking_nums:
-                            st.toast("⚠️ אין מספרי משלוח")
+                            if tn and tn != "התקנה": tracking_nums.append(tn)
+                        if not tracking_nums: st.toast("⚠️ אין מספרי משלוח")
                         else:
                             tracking_nums = list(set(tracking_nums))
                             joined_nums = ", ".join(tracking_nums)
                             subject = f"{joined_nums} להחזיר אלינו בבקשה"
-                            if send_custom_email(subject):
+                            if send_custom_email(subject, body_text=""):
                                 st.success(f"נשלח: {subject}")
+
+        # 5. כפתור מייל ספקים (אין מענה) - משתמש במיילים מהסודות בלבד
+        with col_mail_supplier:
+            if show_bulk_warning: st.warning("⚠️ סמן ידנית")
+            else:
+                if st.button("📞 אין מענה - ספקים"):
+                    if rows_for_action.empty: st.toast("⚠️ אין נתונים")
+                    else:
+                        ace_data = {"orders": [], "tracking": [], "phones": [], "rows": []}
+                        payngo_data = {"orders": [], "tracking": [], "phones": [], "rows": []}
+                        found_supplier = False
+                        
+                        for idx, row in rows_for_action.iterrows():
+                            order_num = str(row['מספר הזמנה']).strip()
+                            tracking_num = str(row['סטטוס משלוח']).strip()
+                            phone_num = str(row['טלפון']).strip()
+                            
+                            if order_num.upper().startswith("PO"): # ACE
+                                ace_data["orders"].append(order_num)
+                                if tracking_num and tracking_num != "התקנה": ace_data["tracking"].append(tracking_num)
+                                if phone_num: ace_data["phones"].append(phone_num)
+                                ace_data["rows"].append(row['_original_row'])
+                                found_supplier = True
+                            elif order_num.startswith("9"): # Payngo
+                                payngo_data["orders"].append(order_num)
+                                if tracking_num and tracking_num != "התקנה": payngo_data["tracking"].append(tracking_num)
+                                if phone_num: payngo_data["phones"].append(phone_num)
+                                payngo_data["rows"].append(row['_original_row'])
+                                found_supplier = True
+                        
+                        if not found_supplier:
+                            st.toast("⚠️ לא זוהו הזמנות אייס (PO) או מחסני חשמל (9)")
+                        else:
+                            # ACE
+                            if ace_data["orders"]:
+                                if not EMAIL_ACE:
+                                    st.error("❌ לא הוגדר מייל לאייס בסודות!")
+                                else:
+                                    unique_orders = list(set(ace_data["orders"]))
+                                    unique_tracking = list(set(ace_data["tracking"]))
+                                    unique_phones = list(set(ace_data["phones"]))
+                                    joined_orders = ", ".join(unique_orders)
+                                    joined_tracking = ", ".join(unique_tracking) if unique_tracking else "ללא מס' משלוח"
+                                    joined_phones = ", ".join(unique_phones)
+                                    subject = f"{joined_orders} {joined_tracking} - אין מענה מהלקוח - האם יש מספר טלפון אחר?"
+                                    body = f"הטלפון שיש לנו כרגע הוא: {joined_phones}\nנא בדקו אם יש מספר אחר."
+                                    
+                                    if send_custom_email(subject, body_text=body, target_email=EMAIL_ACE):
+                                        st.toast("נשלח מייל לאייס ✅")
+                                        for r_idx in ace_data["rows"]: update_log_in_sheet(r_idx, "📧 נשלח ספק (אין מענה)")
+
+                            # Payngo
+                            if payngo_data["orders"]:
+                                if not EMAIL_PAYNGO:
+                                    st.error("❌ לא הוגדר מייל למחסני חשמל בסודות!")
+                                else:
+                                    unique_orders = list(set(payngo_data["orders"]))
+                                    unique_tracking = list(set(payngo_data["tracking"]))
+                                    unique_phones = list(set(payngo_data["phones"]))
+                                    joined_orders = ", ".join(unique_orders)
+                                    joined_tracking = ", ".join(unique_tracking) if unique_tracking else "ללא מס' משלוח"
+                                    joined_phones = ", ".join(unique_phones)
+                                    subject = f"{joined_orders} {joined_tracking} - אין מענה מהלקוח - האם יש מספר טלפון אחר?"
+                                    body = f"הטלפון שיש לנו כרגע הוא: {joined_phones}\nנא בדקו אם יש מספר אחר."
+                                    
+                                    if send_custom_email(subject, body_text=body, target_email=EMAIL_PAYNGO):
+                                        st.toast("נשלח מייל למחסני חשמל ✅")
+                                        for r_idx in payngo_data["rows"]: update_log_in_sheet(r_idx, "📧 נשלח ספק (אין מענה)")
+                            
+                            time.sleep(1)
+                            st.rerun()
 
         # --- העתקה (פתוח תמיד) ---
         st.divider()
@@ -489,5 +548,3 @@ if search_query:
         
     else:
         st.warning(f"לא נמצאו תוצאות עבור: {clean_text_query}")
-
-
