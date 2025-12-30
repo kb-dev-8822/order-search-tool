@@ -17,7 +17,7 @@ SPREADSHEET_ID = '1xUABIGIhnLxO2PYrpAOXZdk48Q-hNYOHkht2vUyaVdE'
 WORKSHEET_NAME = "הזמנות"
 LOG_COLUMN_NAME = "לוג מיילים"
 
-# --- טעינת כתובות מייל ומספרים מהסודות ---
+# --- טעינת כתובות מייל מהסודות ---
 if "suppliers" in st.secrets:
     EMAIL_ACE = st.secrets["suppliers"].get("ace_email")
     EMAIL_PAYNGO = st.secrets["suppliers"].get("payngo_email")
@@ -321,18 +321,23 @@ if search_query:
             except IndexError: continue
         
         display_df = pd.DataFrame(display_rows)
-        # --- הטבלה המקורית שלך (לא נגעתי) ---
-        cols_order = ["תאריך", "מספר הזמנה", "שם לקוח", "טלפון", "כתובת מלאה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME, "בחר"]
+        
+        # --- סידור עמודות (בדיוק כמו בקוד ששלחת) ---
+        cols_order = [LOG_COLUMN_NAME, "סטטוס משלוח", "מוצר", "כמות", "מספר הזמנה", "בחר"]
         
         edited_df = st.data_editor(
             display_df[cols_order],
-            use_container_width=True,
+            use_container_width=False,  
             hide_index=True,
             column_config={
-                "בחר": st.column_config.CheckboxColumn("בחר", default=False),
-                LOG_COLUMN_NAME: st.column_config.TextColumn("לוג", disabled=True)
+                "בחר": st.column_config.CheckboxColumn("בחר", default=False, width="small"),
+                "מספר הזמנה": st.column_config.TextColumn("מספר הזמנה", width="medium"),
+                "כמות": st.column_config.TextColumn("כמות", width="small"),
+                "מוצר": st.column_config.TextColumn("מוצר", width="large"),
+                "סטטוס משלוח": st.column_config.TextColumn("מס משלוח", width="medium"),
+                LOG_COLUMN_NAME: st.column_config.TextColumn("לוג", disabled=True, width="large")
             },
-            disabled=["תאריך", "מספר הזמנה", "שם לקוח", "טלפון", "כתובת מלאה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME]
+            disabled=["מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME]
         )
 
         selected_indices = edited_df[edited_df["בחר"] == True].index
@@ -349,7 +354,7 @@ if search_query:
         else:
             show_bulk_warning = False
 
-        # --- אזור הכפתורים (6 עמודות צפופות עם רווח קטן) ---
+        # --- אזור הכפתורים (השינוי: 6 עמודות + gap small) ---
         col_wa_policy, col_wa_contact, col_wa_install, col_mail_status, col_mail_return, col_mail_supplier = st.columns(6, gap="small")
         
         # 1. וואטסאפ מדיניות
@@ -420,7 +425,7 @@ if search_query:
                             time.sleep(1)
                             st.rerun()
 
-        # 3. וואטסאפ התקנה (החדש!)
+        # 3. וואטסאפ התקנה (התוספת היחידה)
         with col_wa_install:
             if show_bulk_warning: st.warning("⚠️ סמן ידנית")
             else:
