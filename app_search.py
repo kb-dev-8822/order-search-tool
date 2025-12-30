@@ -27,7 +27,7 @@ else:
 
 # -------------------------------------------
 
-@st.cache_data(ttl=60) 
+@st.cache_data # ללא ttl - מקסימום מהירות
 def load_data():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     
@@ -191,6 +191,12 @@ st.markdown("""
     .stApp { direction: rtl; }
     .stMarkdown, h1, h3, h2, p, label, .stRadio { text-align: right !important; direction: rtl !important; }
     .stTextInput input { direction: rtl; text-align: right; }
+    
+    div[data-testid="stDataEditor"] th { text-align: right !important; direction: rtl !important; }
+    div[data-testid="stDataEditor"] td { text-align: right !important; direction: rtl !important; }
+    div[class*="stDataEditor"] div[role="columnheader"] { justify-content: flex-end; }
+    div[class*="stDataEditor"] div[role="gridcell"] { text-align: right; direction: rtl; justify-content: flex-end; }
+    
     code { text-align: right !important; white-space: pre-wrap !important; direction: rtl !important; }
     
     .stButton button {
@@ -202,16 +208,6 @@ st.markdown("""
     .block-container {
         padding-top: 2rem;
         padding-bottom: 1rem;
-    }
-    
-    /* כותרות הטבלה - יישור לימין */
-    .stDataFrame thead th {
-        text-align: right !important;
-    }
-    
-    /* תוכן הטבלה - יישור לימין */
-    .stDataFrame td {
-        text-align: right !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -310,6 +306,7 @@ if search_query:
                     "סטטוס משלוח": tracking,
                     "תאריך": date_val,
                     LOG_COLUMN_NAME: log_val,
+                    "בחר": False,
                     "_excel_line": f"{order_num}\t{qty}\t{sku}\t{first_name}\t{street}\t{house}\t{city}\t{phone_display}",
                     "_text_line": f"פרטי הזמנה: מספר הזמנה: {order_num}, כמות: {qty}, מק\"ט: {sku}, שם: {full_name}, כתובת: {address_display}, טלפון: {phone_display}, מספר משלוח: {tracking}, תאריך: {date_val}",
                     "_original_row": original_idx,
@@ -319,45 +316,33 @@ if search_query:
         
         display_df = pd.DataFrame(display_rows)
         
-        # --- סידור עמודות ל-RTL ---
-        # שמים את "לוג" ראשון (שמאל) ואת "מספר הזמנה" אחרון (ימין)
-        cols_order = [LOG_COLUMN_NAME, "סטטוס משלוח", "מוצר", "כמות", "מספר הזמנה"]
+        # --- סידור עמודות בסדר הפוך (שמאל לימין) כדי שיוצג נכון מימין לשמאל ---
+        # לוג (שמאל) -> סטטוס -> מוצר -> כמות -> הזמנה -> בחר (ימין)
+        cols_order = [LOG_COLUMN_NAME, "סטטוס משלוח", "מוצר", "כמות", "מספר הזמנה", "בחר"]
         
-        # --- עיצוב הטבלה (Pandas Styler) ---
-        # 1. יישור טקסט לימין
-        # 2. כיוון RTL
-        styled_df = display_df[cols_order].style.set_properties(**{
-            'text-align': 'right',
-            'direction': 'rtl',
-            'white-space': 'pre-wrap'
-        }).set_table_styles([
-            dict(selector='th', props=[('text-align', 'right'), ('direction', 'rtl')])
-        ])
-
-        # --- הצגת הטבלה ---
-        # use_container_width=True מחזיר אותה לרוחב המלא (ימין לשמאל)
-        event = st.dataframe(
-            styled_df,
-            use_container_width=True, 
+        edited_df = st.data_editor(
+            display_df[cols_order],
+            use_container_width=False,  
             hide_index=True,
-            on_select="rerun",
-            selection_mode="multi-row",
             column_config={
+                "בחר": st.column_config.CheckboxColumn("בחר", default=False, width="small"),
                 "מספר הזמנה": st.column_config.TextColumn("מספר הזמנה", width="medium"),
-                "מוצר": st.column_config.TextColumn("מוצר", width="large"),
                 "כמות": st.column_config.TextColumn("כמות", width="small"),
+                "מוצר": st.column_config.TextColumn("מוצר", width="large"),
+                # כאן שינינו את הכותרת לתצוגה בלבד
                 "סטטוס משלוח": st.column_config.TextColumn("מס משלוח", width="medium"),
-                LOG_COLUMN_NAME: st.column_config.TextColumn("לוג", width="large"),
-            }
+                LOG_COLUMN_NAME: st.column_config.TextColumn("לוג", disabled=True, width="large")
+            },
+            disabled=["מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME]
         )
 
-        selected_indices = event.selection.rows
-        
-        if not selected_indices:
+        selected_indices = edited_df[edited_df["בחר"] == True].index
+
+        if selected_indices.empty:
             rows_for_action = display_df 
             is_implicit_select_all = True
         else:
-            rows_for_action = display_df.iloc[selected_indices]
+            rows_for_action = display_df.loc[selected_indices]
             is_implicit_select_all = False
             
         if is_implicit_select_all and len(rows_for_action) > 10:
