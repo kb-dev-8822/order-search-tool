@@ -315,8 +315,8 @@ if search_query:
             except IndexError: continue
         
         display_df = pd.DataFrame(display_rows)
-        # --- השינוי כאן: צמצום העמודות המוצגות ---
-        cols_order = ["מספר הזמנה", "מוצר", "סטטוס משלוח", LOG_COLUMN_NAME, "בחר"]
+        # --- צמצום עמודות: כולל כמות ---
+        cols_order = ["מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME, "בחר"]
         
         edited_df = st.data_editor(
             display_df[cols_order],
@@ -326,8 +326,8 @@ if search_query:
                 "בחר": st.column_config.CheckboxColumn("בחר", default=False),
                 LOG_COLUMN_NAME: st.column_config.TextColumn("לוג", disabled=True)
             },
-            # אין צורך לנעול עמודות שהסרנו מהתצוגה, נשאיר רק את הרלוונטיות
-            disabled=["מספר הזמנה", "מוצר", "סטטוס משלוח", LOG_COLUMN_NAME]
+            # נעילת עמודות כולל כמות
+            disabled=["מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME]
         )
 
         selected_indices = edited_df[edited_df["בחר"] == True].index
