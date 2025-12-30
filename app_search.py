@@ -17,8 +17,7 @@ SPREADSHEET_ID = '1xUABIGIhnLxO2PYrpAOXZdk48Q-hNYOHkht2vUyaVdE'
 WORKSHEET_NAME = "הזמנות"
 LOG_COLUMN_NAME = "לוג מיילים"
 
-# --- טעינת נתונים מהסודות ---
-# ספקים
+# --- טעינת כתובות מייל ומספרים מהסודות ---
 if "suppliers" in st.secrets:
     EMAIL_ACE = st.secrets["suppliers"].get("ace_email")
     EMAIL_PAYNGO = st.secrets["suppliers"].get("payngo_email")
@@ -26,7 +25,7 @@ else:
     EMAIL_ACE = None
     EMAIL_PAYNGO = None
 
-# מתקין (ברירת מחדל למספר שביקשת אם לא מוגדר בסודות)
+# טעינת טלפון מתקין (עם ברירת מחדל אם לא הוגדר)
 if "ultramsg" in st.secrets:
     INSTALLATION_PHONE = st.secrets["ultramsg"].get("installation_phone", "0528448382")
 else:
@@ -34,7 +33,7 @@ else:
 
 # -------------------------------------------
 
-@st.cache_data(ttl=60)
+@st.cache_data # ללא ttl - מקסימום מהירות
 def load_data():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     
@@ -322,20 +321,15 @@ if search_query:
             except IndexError: continue
         
         display_df = pd.DataFrame(display_rows)
-        # --- העמודות המצומצמות (כולל כמות) ---
-        # סידרתי את העמודות שיהיה הגיוני מימין לשמאל: בחר, הזמנה, כמות, מוצר...
-        cols_order = ["בחר", "מספר הזמנה", "כמות", "מוצר", "סטטוס משלוח", LOG_COLUMN_NAME]
+        # --- צמצום עמודות (בדיוק לפי הקובץ ששלחת עם תוספת 'כמות' שרצית קודם) ---
+        cols_order = ["מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME, "בחר"]
         
         edited_df = st.data_editor(
             display_df[cols_order],
-            use_container_width=True,  
+            use_container_width=True,
             hide_index=True,
             column_config={
-                "בחר": st.column_config.CheckboxColumn("בחר", default=False, width="small"),
-                "מספר הזמנה": st.column_config.TextColumn("מספר הזמנה", width="medium"),
-                "כמות": st.column_config.TextColumn("כמות", width="small"),
-                "מוצר": st.column_config.TextColumn("מוצר", width="large"),
-                "סטטוס משלוח": st.column_config.TextColumn("מס משלוח", width="medium"),
+                "בחר": st.column_config.CheckboxColumn("בחר", default=False),
                 LOG_COLUMN_NAME: st.column_config.TextColumn("לוג", disabled=True)
             },
             disabled=["מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME]
@@ -355,7 +349,7 @@ if search_query:
         else:
             show_bulk_warning = False
 
-        # --- אזור הכפתורים (6 עמודות צפופות) ---
+        # --- אזור הכפתורים (6 עמודות צפופות עם gap=small) ---
         col_wa_policy, col_wa_contact, col_wa_install, col_mail_status, col_mail_return, col_mail_supplier = st.columns(6, gap="small")
         
         # 1. וואטסאפ מדיניות
@@ -426,7 +420,7 @@ if search_query:
                             time.sleep(1)
                             st.rerun()
 
-        # 3. וואטסאפ התקנה (חדש)
+        # 3. וואטסאפ התקנה (החדש!)
         with col_wa_install:
             if show_bulk_warning: st.warning("⚠️ סמן ידנית")
             else:
@@ -434,9 +428,9 @@ if search_query:
                     if rows_for_action.empty: st.toast("⚠️ אין נתונים")
                     else:
                         rows_to_update_log = []
-                        # קיבוץ לפי מספר הזמנה כדי לאחד מוצרים של אותה הזמנה
+                        # קיבוץ לפי מספר הזמנה כדי לאחד מקטים
                         grouped = rows_for_action.groupby('מספר הזמנה')
-                        all_install_messages = []
+                        all_messages = []
                         
                         for order_num, group in grouped:
                             first_row = group.iloc[0]
@@ -444,23 +438,23 @@ if search_query:
                             address = first_row['כתובת מלאה']
                             phone = first_row['טלפון']
                             
-                            # איחוד פריטים: "1 X מקט, 2 X מקט"
+                            # איחוד מקטים: כמות X מקט
                             items_list = []
                             for _, r in group.iterrows():
                                 items_list.append(f"{r['כמות']} X {r['מוצר']}")
                             items_str = ", ".join(items_list)
                             
-                            # שורת ההודעה: מספר הזמנה | מוצרים | שם | כתובת | טלפון | התקנה
+                            # שורת ההודעה הסופית
                             line = f"{order_num} | {items_str} | {name} | {address} | {phone} | התקנה"
-                            all_install_messages.append(line)
+                            all_messages.append(line)
                             
                             rows_to_update_log.extend(group['_original_row'].tolist())
                         
-                        # שליחת הודעה אחת מרוכזת למתקין
-                        final_msg = "\n\n".join(all_install_messages)
+                        # איחוד כל השורות להודעה אחת
+                        final_msg = "\n\n".join(all_messages)
                         
                         if send_whatsapp_message(INSTALLATION_PHONE, final_msg):
-                            st.toast("נשלח למתקין בהצלחה ✅")
+                            st.toast("נשלח למתקין ✅")
                             for r_idx in rows_to_update_log: update_log_in_sheet(r_idx, "💬 נשלח למתקין")
                             time.sleep(1)
                             st.rerun()
