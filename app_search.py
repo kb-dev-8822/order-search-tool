@@ -316,7 +316,7 @@ if search_query:
         
         display_df = pd.DataFrame(display_rows)
         # --- השינוי כאן: צמצום העמודות המוצגות ---
-        cols_order = ["מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME, "בחר"]
+        cols_order = ["מספר הזמנה", "מוצר", "סטטוס משלוח", LOG_COLUMN_NAME, "בחר"]
         
         edited_df = st.data_editor(
             display_df[cols_order],
@@ -327,7 +327,7 @@ if search_query:
                 LOG_COLUMN_NAME: st.column_config.TextColumn("לוג", disabled=True)
             },
             # אין צורך לנעול עמודות שהסרנו מהתצוגה, נשאיר רק את הרלוונטיות
-            disabled=["מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME]
+            disabled=["מספר הזמנה", "מוצר", "סטטוס משלוח", LOG_COLUMN_NAME]
         )
 
         selected_indices = edited_df[edited_df["בחר"] == True].index
@@ -548,4 +548,3 @@ if search_query:
         
     else:
         st.warning(f"לא נמצאו תוצאות עבור: {clean_text_query}")
-
