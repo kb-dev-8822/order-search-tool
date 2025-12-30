@@ -18,7 +18,7 @@ WORKSHEET_NAME = "הזמנות"
 LOG_COLUMN_NAME = "לוג מיילים"
 
 # --- טעינת נתונים מהסודות ---
-# טעינת מיילים ספקים
+# ספקים
 if "suppliers" in st.secrets:
     EMAIL_ACE = st.secrets["suppliers"].get("ace_email")
     EMAIL_PAYNGO = st.secrets["suppliers"].get("payngo_email")
@@ -26,9 +26,8 @@ else:
     EMAIL_ACE = None
     EMAIL_PAYNGO = None
 
-# טעינת טלפון מתקין
+# מתקין (ברירת מחדל למספר שביקשת אם לא מוגדר בסודות)
 if "ultramsg" in st.secrets:
-    # ברירת מחדל אם לא הוגדר בסודות - המספר שביקשת
     INSTALLATION_PHONE = st.secrets["ultramsg"].get("installation_phone", "0528448382")
 else:
     INSTALLATION_PHONE = "0528448382"
@@ -324,18 +323,18 @@ if search_query:
         
         display_df = pd.DataFrame(display_rows)
         # --- העמודות המצומצמות (כולל כמות) ---
-        cols_order = ["מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME, "בחר"]
+        # סידרתי את העמודות שיהיה הגיוני מימין לשמאל: בחר, הזמנה, כמות, מוצר...
+        cols_order = ["בחר", "מספר הזמנה", "כמות", "מוצר", "סטטוס משלוח", LOG_COLUMN_NAME]
         
         edited_df = st.data_editor(
             display_df[cols_order],
-            # חזרנו לרוחב מלא למניעת הבעיה של הטבלה הקטנה
             use_container_width=True,  
             hide_index=True,
             column_config={
-                "בחר": st.column_config.CheckboxColumn("בחר", default=False),
+                "בחר": st.column_config.CheckboxColumn("בחר", default=False, width="small"),
                 "מספר הזמנה": st.column_config.TextColumn("מספר הזמנה", width="medium"),
-                "מוצר": st.column_config.TextColumn("מוצר", width="large"),
                 "כמות": st.column_config.TextColumn("כמות", width="small"),
+                "מוצר": st.column_config.TextColumn("מוצר", width="large"),
                 "סטטוס משלוח": st.column_config.TextColumn("מס משלוח", width="medium"),
                 LOG_COLUMN_NAME: st.column_config.TextColumn("לוג", disabled=True)
             },
@@ -435,12 +434,11 @@ if search_query:
                     if rows_for_action.empty: st.toast("⚠️ אין נתונים")
                     else:
                         rows_to_update_log = []
-                        # קיבוץ לפי מספר הזמנה - כדי לאחד מק"טים של אותה הזמנה
+                        # קיבוץ לפי מספר הזמנה כדי לאחד מוצרים של אותה הזמנה
                         grouped = rows_for_action.groupby('מספר הזמנה')
                         all_install_messages = []
                         
                         for order_num, group in grouped:
-                            # לוקחים פרטים מהשורה הראשונה בקבוצה
                             first_row = group.iloc[0]
                             name = first_row['שם לקוח']
                             address = first_row['כתובת מלאה']
@@ -452,7 +450,7 @@ if search_query:
                                 items_list.append(f"{r['כמות']} X {r['מוצר']}")
                             items_str = ", ".join(items_list)
                             
-                            # הפורמט המבוקש בדיוק
+                            # שורת ההודעה: מספר הזמנה | מוצרים | שם | כתובת | טלפון | התקנה
                             line = f"{order_num} | {items_str} | {name} | {address} | {phone} | התקנה"
                             all_install_messages.append(line)
                             
