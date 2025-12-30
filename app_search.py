@@ -33,7 +33,7 @@ else:
 
 # -------------------------------------------
 
-@st.cache_data(ttl=60) # רענון כל דקה
+@st.cache_data # ללא ttl - מקסימום מהירות
 def load_data():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     
@@ -321,7 +321,7 @@ if search_query:
             except IndexError: continue
         
         display_df = pd.DataFrame(display_rows)
-        # --- הטבלה המלאה (כמו בקובץ שלך) ---
+        # --- הטבלה המקורית שלך (לא נגעתי) ---
         cols_order = ["תאריך", "מספר הזמנה", "שם לקוח", "טלפון", "כתובת מלאה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME, "בחר"]
         
         edited_df = st.data_editor(
@@ -349,14 +349,14 @@ if search_query:
         else:
             show_bulk_warning = False
 
-        # --- אזור הכפתורים (6 עמודות צפופות) ---
+        # --- אזור הכפתורים (6 עמודות צפופות עם רווח קטן) ---
         col_wa_policy, col_wa_contact, col_wa_install, col_mail_status, col_mail_return, col_mail_supplier = st.columns(6, gap="small")
         
         # 1. וואטסאפ מדיניות
         with col_wa_policy:
             if show_bulk_warning: st.warning("⚠️ סמן ידנית")
             else:
-                if st.button("💬 מדיניות"):
+                if st.button("💬 שלח מדיניות"):
                     if rows_for_action.empty: st.toast("⚠️ אין נתונים")
                     else:
                         count_sent = 0
@@ -420,7 +420,7 @@ if search_query:
                             time.sleep(1)
                             st.rerun()
 
-        # 3. וואטסאפ התקנה (החדש והמבוקש!)
+        # 3. וואטסאפ התקנה (החדש!)
         with col_wa_install:
             if show_bulk_warning: st.warning("⚠️ סמן ידנית")
             else:
@@ -428,32 +428,26 @@ if search_query:
                     if rows_for_action.empty: st.toast("⚠️ אין נתונים")
                     else:
                         rows_to_update_log = []
-                        # קיבוץ לפי מספר הזמנה
                         grouped = rows_for_action.groupby('מספר הזמנה')
-                        all_messages = []
+                        all_install_messages = []
                         
                         for order_num, group in grouped:
                             first_row = group.iloc[0]
                             name = first_row['שם לקוח']
                             address = first_row['כתובת מלאה']
                             phone = first_row['טלפון']
-                            
-                            # איחוד מק"טים: כמות X מקט
                             items_list = []
                             for _, r in group.iterrows():
                                 items_list.append(f"{r['כמות']} X {r['מוצר']}")
                             items_str = ", ".join(items_list)
                             
-                            # שורת ההודעה: מספר הזמנה | מוצרים | שם | כתובת | טלפון | התקנה
                             line = f"{order_num} | {items_str} | {name} | {address} | {phone} | התקנה"
-                            all_messages.append(line)
-                            
+                            all_install_messages.append(line)
                             rows_to_update_log.extend(group['_original_row'].tolist())
                         
-                        # שליחה למתקין
-                        final_msg = "\n\n".join(all_messages)
+                        final_msg = "\n\n".join(all_install_messages)
                         if send_whatsapp_message(INSTALLATION_PHONE, final_msg):
-                            st.toast("נשלח למתקין ✅")
+                            st.toast("נשלח למתקין בהצלחה ✅")
                             for r_idx in rows_to_update_log: update_log_in_sheet(r_idx, "💬 נשלח למתקין")
                             time.sleep(1)
                             st.rerun()
@@ -511,7 +505,7 @@ if search_query:
         with col_mail_supplier:
             if show_bulk_warning: st.warning("⚠️ סמן ידנית")
             else:
-                if st.button("📞 אין מענה"):
+                if st.button("📞 אין מענה - ספקים"):
                     if rows_for_action.empty: st.toast("⚠️ אין נתונים")
                     else:
                         ace_data = {"orders": [], "tracking": [], "phones": [], "rows": []}
