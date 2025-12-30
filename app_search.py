@@ -27,7 +27,7 @@ else:
 
 # -------------------------------------------
 
-@st.cache_data(ttl=60) # רענון כל דקה למקרה של עדכונים
+@st.cache_data(ttl=60) 
 def load_data():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     
@@ -204,8 +204,13 @@ st.markdown("""
         padding-bottom: 1rem;
     }
     
-    /* יישור כותרות טבלה לימין */
-    thead tr th {
+    /* כותרות הטבלה - יישור לימין */
+    .stDataFrame thead th {
+        text-align: right !important;
+    }
+    
+    /* תוכן הטבלה - יישור לימין */
+    .stDataFrame td {
         text-align: right !important;
     }
 </style>
@@ -305,7 +310,6 @@ if search_query:
                     "סטטוס משלוח": tracking,
                     "תאריך": date_val,
                     LOG_COLUMN_NAME: log_val,
-                    # לא צריך יותר עמודת 'בחר' ידנית
                     "_excel_line": f"{order_num}\t{qty}\t{sku}\t{first_name}\t{street}\t{house}\t{city}\t{phone_display}",
                     "_text_line": f"פרטי הזמנה: מספר הזמנה: {order_num}, כמות: {qty}, מק\"ט: {sku}, שם: {full_name}, כתובת: {address_display}, טלפון: {phone_display}, מספר משלוח: {tracking}, תאריך: {date_val}",
                     "_original_row": original_idx,
@@ -315,25 +319,26 @@ if search_query:
         
         display_df = pd.DataFrame(display_rows)
         
-        # סדר עמודות סופי לתצוגה
-        cols_order = ["מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME]
+        # --- סידור עמודות ל-RTL ---
+        # שמים את "לוג" ראשון (שמאל) ואת "מספר הזמנה" אחרון (ימין)
+        cols_order = [LOG_COLUMN_NAME, "סטטוס משלוח", "מוצר", "כמות", "מספר הזמנה"]
         
-        # --- שינוי מרכזי: שימוש ב-st.dataframe עם עיצוב Pandas Styler ---
-        # זה מאפשר יישור לימין אמיתי!
-        
-        # 1. יצירת Styler object עם יישור לימין וכיוון RTL
+        # --- עיצוב הטבלה (Pandas Styler) ---
+        # 1. יישור טקסט לימין
+        # 2. כיוון RTL
         styled_df = display_df[cols_order].style.set_properties(**{
             'text-align': 'right',
             'direction': 'rtl',
-            'white-space': 'pre-wrap' # גלישת שורות אם צריך
+            'white-space': 'pre-wrap'
         }).set_table_styles([
             dict(selector='th', props=[('text-align', 'right'), ('direction', 'rtl')])
         ])
 
-        # 2. שימוש ברכיב בחירה מובנה (on_select)
+        # --- הצגת הטבלה ---
+        # use_container_width=True מחזיר אותה לרוחב המלא (ימין לשמאל)
         event = st.dataframe(
             styled_df,
-            use_container_width=True,
+            use_container_width=True, 
             hide_index=True,
             on_select="rerun",
             selection_mode="multi-row",
@@ -346,11 +351,9 @@ if search_query:
             }
         )
 
-        # --- לוגיקת בחירה חדשה ---
-        # event.selection.rows מחזיר את האינדקסים שנבחרו (מספרים: 0, 1, 3...)
         selected_indices = event.selection.rows
         
-        if not selected_indices: # רשימה ריקה = לא נבחר כלום
+        if not selected_indices:
             rows_for_action = display_df 
             is_implicit_select_all = True
         else:
