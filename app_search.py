@@ -18,7 +18,6 @@ WORKSHEET_NAME = "הזמנות"
 LOG_COLUMN_NAME = "לוג מיילים"
 
 # --- טעינת כתובות מייל מהסודות (ללא ברירת מחדל בקוד) ---
-# אם לא מוגדר בסודות - המשתנים יהיו None ולא יישלח מייל
 if "suppliers" in st.secrets:
     EMAIL_ACE = st.secrets["suppliers"].get("ace_email")
     EMAIL_PAYNGO = st.secrets["suppliers"].get("payngo_email")
@@ -148,7 +147,6 @@ def send_custom_email(subject_line, body_text="", target_email=None):
     sender = st.secrets["email"]["sender_address"]
     password = st.secrets["email"]["password"]
     
-    # אם הועבר יעד ספציפי - השתמש בו, אחרת קח את ברירת המחדל מהסודות
     recipient = target_email if target_email else st.secrets["email"]["recipient_address"]
 
     msg = MIMEMultipart()
@@ -317,7 +315,8 @@ if search_query:
             except IndexError: continue
         
         display_df = pd.DataFrame(display_rows)
-        cols_order = ["תאריך", "מספר הזמנה", "שם לקוח", "טלפון", "כתובת מלאה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME, "בחר"]
+        # --- השינוי כאן: צמצום העמודות המוצגות ---
+        cols_order = ["מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME, "בחר"]
         
         edited_df = st.data_editor(
             display_df[cols_order],
@@ -327,7 +326,8 @@ if search_query:
                 "בחר": st.column_config.CheckboxColumn("בחר", default=False),
                 LOG_COLUMN_NAME: st.column_config.TextColumn("לוג", disabled=True)
             },
-            disabled=["תאריך", "מספר הזמנה", "שם לקוח", "טלפון", "כתובת מלאה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME]
+            # אין צורך לנעול עמודות שהסרנו מהתצוגה, נשאיר רק את הרלוונטיות
+            disabled=["מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME]
         )
 
         selected_indices = edited_df[edited_df["בחר"] == True].index
@@ -464,7 +464,7 @@ if search_query:
                             if send_custom_email(subject, body_text=""):
                                 st.success(f"נשלח: {subject}")
 
-        # 5. כפתור מייל ספקים (אין מענה) - משתמש במיילים מהסודות בלבד
+        # 5. כפתור מייל ספקים (אין מענה)
         with col_mail_supplier:
             if show_bulk_warning: st.warning("⚠️ סמן ידנית")
             else:
