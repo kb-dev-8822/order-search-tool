@@ -27,7 +27,7 @@ else:
 
 # -------------------------------------------
 
-@st.cache_data # ללא ttl - מקסימום מהירות
+@st.cache_data(ttl=60) # רענון כל דקה למקרה של עדכונים
 def load_data():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     
@@ -188,43 +188,9 @@ def clean_input_garbage(val):
 # --- עיצוב CSS ---
 st.markdown("""
 <style>
-    /* הגדרות כלליות לאפליקציה */
     .stApp { direction: rtl; }
-    
-    /* יישור טקסט וכיוון כללי */
-    .stMarkdown, h1, h3, h2, p, label, .stRadio { 
-        text-align: right !important; 
-        direction: rtl !important; 
-    }
-    
-    /* יישור שדות קלט */
-    .stTextInput input { 
-        direction: rtl; 
-        text-align: right; 
-    }
-    
-    /* --- הגדרות אגרסיביות לטבלה (DataEditor) --- */
-    
-    /* כותרות הטבלה - יישור לימין */
-    div[data-testid="stDataEditor"] div[role="columnheader"] {
-        justify-content: flex-end !important;
-        text-align: right !important;
-        direction: rtl !important;
-    }
-    
-    /* תוכן התאים - יישור לימין */
-    div[data-testid="stDataEditor"] div[role="gridcell"] {
-        justify-content: flex-end !important;
-        text-align: right !important;
-        direction: rtl !important;
-    }
-    
-    /* לוודא שהטקסט בתוך התא גם מיושר */
-    div[data-testid="stDataEditor"] div[role="gridcell"] > div {
-        text-align: right !important;
-        justify-content: flex-end !important;
-    }
-
+    .stMarkdown, h1, h3, h2, p, label, .stRadio { text-align: right !important; direction: rtl !important; }
+    .stTextInput input { direction: rtl; text-align: right; }
     code { text-align: right !important; white-space: pre-wrap !important; direction: rtl !important; }
     
     .stButton button {
@@ -236,6 +202,11 @@ st.markdown("""
     .block-container {
         padding-top: 2rem;
         padding-bottom: 1rem;
+    }
+    
+    /* יישור כותרות טבלה לימין */
+    thead tr th {
+        text-align: right !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -334,7 +305,7 @@ if search_query:
                     "סטטוס משלוח": tracking,
                     "תאריך": date_val,
                     LOG_COLUMN_NAME: log_val,
-                    "בחר": False,
+                    # לא צריך יותר עמודת 'בחר' ידנית
                     "_excel_line": f"{order_num}\t{qty}\t{sku}\t{first_name}\t{street}\t{house}\t{city}\t{phone_display}",
                     "_text_line": f"פרטי הזמנה: מספר הזמנה: {order_num}, כמות: {qty}, מק\"ט: {sku}, שם: {full_name}, כתובת: {address_display}, טלפון: {phone_display}, מספר משלוח: {tracking}, תאריך: {date_val}",
                     "_original_row": original_idx,
@@ -344,31 +315,46 @@ if search_query:
         
         display_df = pd.DataFrame(display_rows)
         
-        # סדר העמודות (הפוך לתצוגה)
-        cols_order = [LOG_COLUMN_NAME, "סטטוס משלוח", "מוצר", "כמות", "מספר הזמנה", "בחר"]
+        # סדר עמודות סופי לתצוגה
+        cols_order = ["מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME]
         
-        edited_df = st.data_editor(
-            display_df[cols_order],
-            use_container_width=False,  
+        # --- שינוי מרכזי: שימוש ב-st.dataframe עם עיצוב Pandas Styler ---
+        # זה מאפשר יישור לימין אמיתי!
+        
+        # 1. יצירת Styler object עם יישור לימין וכיוון RTL
+        styled_df = display_df[cols_order].style.set_properties(**{
+            'text-align': 'right',
+            'direction': 'rtl',
+            'white-space': 'pre-wrap' # גלישת שורות אם צריך
+        }).set_table_styles([
+            dict(selector='th', props=[('text-align', 'right'), ('direction', 'rtl')])
+        ])
+
+        # 2. שימוש ברכיב בחירה מובנה (on_select)
+        event = st.dataframe(
+            styled_df,
+            use_container_width=True,
             hide_index=True,
+            on_select="rerun",
+            selection_mode="multi-row",
             column_config={
-                "בחר": st.column_config.CheckboxColumn("בחר", default=False, width="small"),
                 "מספר הזמנה": st.column_config.TextColumn("מספר הזמנה", width="medium"),
-                "כמות": st.column_config.TextColumn("כמות", width="small"),
                 "מוצר": st.column_config.TextColumn("מוצר", width="large"),
+                "כמות": st.column_config.TextColumn("כמות", width="small"),
                 "סטטוס משלוח": st.column_config.TextColumn("מס משלוח", width="medium"),
-                LOG_COLUMN_NAME: st.column_config.TextColumn("לוג", disabled=True, width="large")
-            },
-            disabled=["מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME]
+                LOG_COLUMN_NAME: st.column_config.TextColumn("לוג", width="large"),
+            }
         )
 
-        selected_indices = edited_df[edited_df["בחר"] == True].index
-
-        if selected_indices.empty:
+        # --- לוגיקת בחירה חדשה ---
+        # event.selection.rows מחזיר את האינדקסים שנבחרו (מספרים: 0, 1, 3...)
+        selected_indices = event.selection.rows
+        
+        if not selected_indices: # רשימה ריקה = לא נבחר כלום
             rows_for_action = display_df 
             is_implicit_select_all = True
         else:
-            rows_for_action = display_df.loc[selected_indices]
+            rows_for_action = display_df.iloc[selected_indices]
             is_implicit_select_all = False
             
         if is_implicit_select_all and len(rows_for_action) > 10:
