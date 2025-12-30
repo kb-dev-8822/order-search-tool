@@ -27,7 +27,7 @@ else:
 
 # -------------------------------------------
 
-@st.cache_data # ללא ttl - מקסימום מהירות
+@st.cache_data(ttl=60)
 def load_data():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     
@@ -185,18 +185,24 @@ def clean_input_garbage(val):
         cleaned_val = cleaned_val.replace(char, '')
     return cleaned_val.strip()
 
-# --- עיצוב CSS ---
+# --- עיצוב CSS (קריטי!) ---
 st.markdown("""
 <style>
     .stApp { direction: rtl; }
     .stMarkdown, h1, h3, h2, p, label, .stRadio { text-align: right !important; direction: rtl !important; }
     .stTextInput input { direction: rtl; text-align: right; }
     
-    div[data-testid="stDataEditor"] th { text-align: right !important; direction: rtl !important; }
-    div[data-testid="stDataEditor"] td { text-align: right !important; direction: rtl !important; }
-    div[class*="stDataEditor"] div[role="columnheader"] { justify-content: flex-end; }
-    div[class*="stDataEditor"] div[role="gridcell"] { text-align: right; direction: rtl; justify-content: flex-end; }
+    /* הופך את כל הטבלה ל-RTL. זה זורק את העמודה הראשונה ימינה */
+    div[data-testid="stDataEditor"] {
+        direction: rtl !important;
+    }
     
+    /* מנסה ליישר את התוכן לימין (בתוך הקנבס זה קשה, אבל זה הכי טוב שאפשר) */
+    div[data-testid="stDataEditor"] div[role="gridcell"] {
+        direction: rtl !important;
+        text-align: right !important;
+    }
+
     code { text-align: right !important; white-space: pre-wrap !important; direction: rtl !important; }
     
     .stButton button {
@@ -316,20 +322,20 @@ if search_query:
         
         display_df = pd.DataFrame(display_rows)
         
-        # --- סידור עמודות בסדר הפוך (שמאל לימין) כדי שיוצג נכון מימין לשמאל ---
-        # לוג (שמאל) -> סטטוס -> מוצר -> כמות -> הזמנה -> בחר (ימין)
-        cols_order = [LOG_COLUMN_NAME, "סטטוס משלוח", "מוצר", "כמות", "מספר הזמנה", "בחר"]
+        # --- הטריק: שים את 'בחר' ראשון ---
+        # בגלל שהגדרנו ב-CSS direction: rtl, העמודה הראשונה תופיע בצד ימין!
+        cols_order = ["בחר", "מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME]
         
+        # חוזרים ל-data_editor (הכי יציב לתיבת בחירה ידנית)
         edited_df = st.data_editor(
             display_df[cols_order],
-            use_container_width=False,  
+            use_container_width=True, # חוזרים לרוחב מלא
             hide_index=True,
             column_config={
                 "בחר": st.column_config.CheckboxColumn("בחר", default=False, width="small"),
                 "מספר הזמנה": st.column_config.TextColumn("מספר הזמנה", width="medium"),
                 "כמות": st.column_config.TextColumn("כמות", width="small"),
                 "מוצר": st.column_config.TextColumn("מוצר", width="large"),
-                # כאן שינינו את הכותרת לתצוגה בלבד
                 "סטטוס משלוח": st.column_config.TextColumn("מס משלוח", width="medium"),
                 LOG_COLUMN_NAME: st.column_config.TextColumn("לוג", disabled=True, width="large")
             },
