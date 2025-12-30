@@ -17,7 +17,7 @@ SPREADSHEET_ID = '1xUABIGIhnLxO2PYrpAOXZdk48Q-hNYOHkht2vUyaVdE'
 WORKSHEET_NAME = "הזמנות"
 LOG_COLUMN_NAME = "לוג מיילים"
 
-# --- טעינת כתובות מייל מהסודות (ללא ברירת מחדל בקוד) ---
+# --- טעינת כתובות מייל מהסודות ---
 if "suppliers" in st.secrets:
     EMAIL_ACE = st.secrets["suppliers"].get("ace_email")
     EMAIL_PAYNGO = st.secrets["suppliers"].get("payngo_email")
@@ -315,18 +315,22 @@ if search_query:
             except IndexError: continue
         
         display_df = pd.DataFrame(display_rows)
-        # --- צמצום עמודות: כולל כמות ---
+        # --- צמצום ועיצוב רוחב עמודות (AutoFit) ---
         cols_order = ["מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME, "בחר"]
         
         edited_df = st.data_editor(
             display_df[cols_order],
-            use_container_width=True,
+            # המפתח לשינוי: ביטול מתיחת הטבלה לכל הרוחב
+            use_container_width=False,  
             hide_index=True,
             column_config={
-                "בחר": st.column_config.CheckboxColumn("בחר", default=False),
-                LOG_COLUMN_NAME: st.column_config.TextColumn("לוג", disabled=True)
+                "בחר": st.column_config.CheckboxColumn("בחר", default=False, width="small"),
+                "כמות": st.column_config.TextColumn("כמות", width="small"),
+                "מספר הזמנה": st.column_config.TextColumn("מספר הזמנה", width="medium"),
+                "סטטוס משלוח": st.column_config.TextColumn("סטטוס משלוח", width="medium"),
+                "מוצר": st.column_config.TextColumn("מוצר", width="large"),
+                LOG_COLUMN_NAME: st.column_config.TextColumn("לוג", disabled=True, width="large")
             },
-            # נעילת עמודות כולל כמות
             disabled=["מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME]
         )
 
