@@ -14,6 +14,26 @@ st.set_page_config(layout="wide", page_title="איתור הזמנות", page_ico
 
 # --- מנגנון אבטחה (Login) ---
 def check_password():
+    # הזרקת CSS מקומי ספציפית למסך ההתחברות כדי שיהיה מימין לשמאל
+    st.markdown("""
+        <style>
+            .stTextInput > label {
+                direction: rtl;
+                text-align: right;
+                width: 100%;
+                display: block;
+            }
+            .stTextInput input {
+                direction: rtl;
+                text-align: right;
+            }
+            div[data-testid="stMarkdownContainer"] p {
+                direction: rtl;
+                text-align: right;
+            }
+        </style>
+    """, unsafe_allow_html=True)
+
     if "app_password" not in st.secrets:
         st.warning("⚠️ לא הוגדרה סיסמה ב-Secrets. הכניסה חופשית.")
         return True
@@ -622,4 +642,5 @@ if search_query:
         
     else:
         st.warning(f"לא נמצאו תוצאות עבור: {clean_text_query}")
+
 
