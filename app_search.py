@@ -12,6 +12,38 @@ import requests
 # --- הגדרת תצוגה רחבה ---
 st.set_page_config(layout="wide", page_title="איתור הזמנות", page_icon="🔎")
 
+# --- מנגנון אבטחה (Login) ---
+def check_password():
+    if "app_password" not in st.secrets:
+        st.warning("⚠️ לא הוגדרה סיסמה ב-Secrets. הכניסה חופשית.")
+        return True
+
+    def password_entered():
+        if st.session_state["password"] == st.secrets["app_password"]:
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  
+        else:
+            st.session_state["password_correct"] = False
+
+    if "password_correct" not in st.session_state:
+        st.markdown("### 🔒 התחברות למערכת")
+        st.text_input(
+            "הזמן סיסמה", type="password", on_change=password_entered, key="password"
+        )
+        return False
+    elif not st.session_state["password_correct"]:
+        st.markdown("### 🔒 התחברות למערכת")
+        st.text_input(
+            "הזמן סיסמה", type="password", on_change=password_entered, key="password"
+        )
+        st.error("❌ סיסמה שגויה")
+        return False
+    else:
+        return True
+
+if not check_password():
+    st.stop()
+
 # --- הגדרות קבועות ---
 SPREADSHEET_ID = '1xUABIGIhnLxO2PYrpAOXZdk48Q-hNYOHkht2vUyaVdE'
 WORKSHEET_NAME = "הזמנות"
@@ -590,3 +622,4 @@ if search_query:
         
     else:
         st.warning(f"לא נמצאו תוצאות עבור: {clean_text_query}")
+
