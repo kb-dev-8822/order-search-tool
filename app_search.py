@@ -297,7 +297,6 @@ if search_query:
 
     conditions = []
     
-    # שימוש ב-regex=False כדי למנוע קריסה מסימנים מיוחדים
     # 1. חיפוש הזמנה
     mask_order = df['מספר הזמנה'].astype(str).str.contains(clean_text_query, case=False, na=False, regex=False)
     conditions.append(mask_order)
@@ -319,10 +318,10 @@ if search_query:
 
     # --- הצגת תוצאות ---
     if not filtered_df.empty:
-        # מיון
+        # מיון: מהמוקדם למאוחר (Ascending)
         try:
             filtered_df['temp_date'] = pd.to_datetime(filtered_df['תאריך'], errors='coerce')
-            filtered_df = filtered_df.sort_values(by='temp_date', ascending=False)
+            filtered_df = filtered_df.sort_values(by='temp_date', ascending=True) # <-- תיקון מיון
         except: pass
 
         display_rows = []
@@ -345,7 +344,9 @@ if search_query:
             phone_display = "0" + phone_clean if phone_clean else ""
             
             tracking = str(row['סטטוס משלוח']).strip()
-            if not tracking and "התקנות" in str(row.get('מקור', '')): tracking = "התקנה"
+            # תיקון לוגיקה: אם אין מספר משלוח -> התקנה
+            if not tracking or tracking == "None": 
+                tracking = "התקנה"
             
             first_name = full_name.split()[0] if full_name else ""
             log_val = str(row.get(LOG_COLUMN_NAME, ""))
