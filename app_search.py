@@ -13,23 +13,41 @@ import requests
 st.set_page_config(layout="wide", page_title="איתור הזמנות", page_icon="🔎")
 
 # --- מנגנון אבטחה (Login) ---
+# --- מנגנון אבטחה (Login) ---
 def check_password():
-    # הזרקת CSS מקומי ספציפית למסך ההתחברות כדי שיהיה מימין לשמאל
+    # הזרקת CSS אגרסיבי ליישור לימין
     st.markdown("""
         <style>
-            .stTextInput > label {
-                direction: rtl;
-                text-align: right;
-                width: 100%;
-                display: block;
+            /* יישור כותרות (כמו 'התחברות למערכת') לימין */
+            h1, h2, h3, h4, h5, h6 {
+                direction: rtl !important;
+                text-align: right !important;
             }
-            .stTextInput input {
-                direction: rtl;
-                text-align: right;
-            }
+            
+            /* יישור טקסט רגיל לימין */
             div[data-testid="stMarkdownContainer"] p {
-                direction: rtl;
-                text-align: right;
+                direction: rtl !important;
+                text-align: right !important;
+            }
+            
+            /* יישור הכותרת של שדה הסיסמה ('הזמן סיסמה') */
+            .stTextInput > label {
+                direction: rtl !important;
+                text-align: right !important;
+                width: 100%;
+                display: flex;
+                justify-content: flex-start; /* ב-RTL זה אומר ימין */
+            }
+            
+            /* יישור הטקסט שכותבים בתוך השדה */
+            .stTextInput input {
+                direction: rtl !important;
+                text-align: right !important;
+            }
+            
+            /* הזזה של כל הבלוקים לימין */
+            .stElementContainer {
+                direction: rtl !important;
             }
         </style>
     """, unsafe_allow_html=True)
@@ -642,5 +660,6 @@ if search_query:
         
     else:
         st.warning(f"לא נמצאו תוצאות עבור: {clean_text_query}")
+
 
 
