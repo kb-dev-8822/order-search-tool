@@ -27,6 +27,10 @@ def check_password():
                 display: flex;
                 justify-content: flex-start;
             }
+            /* יישור כפתורים בסרגל הצד */
+            section[data-testid="stSidebar"] .stButton button {
+                text-align: center;
+            }
         </style>
     """, unsafe_allow_html=True)
 
@@ -170,7 +174,6 @@ def format_date_il(d):
     """ממיר תאריך SQL לפורמט ישראלי"""
     if not d: return ""
     try:
-        # מנסה להמיר ל-datetime ואז לסטרינג
         dt = pd.to_datetime(d)
         return dt.strftime('%d/%m/%Y')
     except:
@@ -246,6 +249,11 @@ st.markdown("""
 
 st.title("🔎 איתור הזמנות מהיר (SQL)")
 
+# --- כפתור רענון בסרגל הצד (חדש!) ---
+if st.sidebar.button("🔄 רענן נתונים"):
+    load_data.clear()
+    st.rerun()
+
 try:
     with st.spinner('טוען נתונים מהענן...'):
         df = load_data()
@@ -264,11 +272,11 @@ if search_query:
 
     conditions = []
     
-    # 1. חיפוש הזמנה (תיקון: regex=False מונע קריסה מסימנים מיוחדים)
+    # 1. חיפוש הזמנה
     mask_order = df['מספר הזמנה'].astype(str).str.contains(clean_text_query, case=False, na=False, regex=False)
     conditions.append(mask_order)
 
-    # 2. חיפוש משלוח (regex=False)
+    # 2. חיפוש משלוח
     if 'סטטוס משלוח' in df.columns:
         mask_tracking = df['סטטוס משלוח'].astype(str).str.contains(clean_text_query, case=False, na=False, regex=False)
         conditions.append(mask_tracking)
@@ -294,10 +302,7 @@ if search_query:
         display_rows = []
         for index, row in filtered_df.iterrows():
             order_num = str(row['מספר הזמנה']).strip()
-            
-            # תיקון כמויות (1.0 -> 1)
             qty = format_quantity(row['כמות'])
-            
             sku = str(row['מוצר']).strip()
             full_name = str(row['שם לקוח']).strip()
             street = str(row['רחוב']).strip()
@@ -312,7 +317,6 @@ if search_query:
             tracking = str(row['סטטוס משלוח']).strip()
             if not tracking and "התקנות" in str(row.get('מקור', '')): tracking = "התקנה"
             
-            # תיקון תאריך (DD/MM/YYYY)
             date_val = format_date_il(row['תאריך'])
 
             first_name = full_name.split()[0] if full_name else ""
