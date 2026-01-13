@@ -60,7 +60,6 @@ if not check_password():
 # ⚙️ הגדרות וחיבורים
 # ==========================================
 
-# שמות עמודות ב-SQL מול שמות באפליקציה
 SQL_TO_APP_COLS = {
     'order_num': 'מספר הזמנה',
     'customer_name': 'שם לקוח',
@@ -68,7 +67,7 @@ SQL_TO_APP_COLS = {
     'city': 'עיר',
     'street': 'רחוב',
     'house_num': 'מספר בית',
-    'sku': 'מוצר', # ב-SQL זה sku
+    'sku': 'מוצר',
     'quantity': 'כמות',
     'shipping_num': 'סטטוס משלוח',
     'order_date': 'תאריך',
@@ -76,13 +75,10 @@ SQL_TO_APP_COLS = {
 }
 
 LOG_COLUMN_NAME = "לוג מיילים"
-
-# פרטי מיילים וטלפון מסודות
 EMAIL_ACE = st.secrets["suppliers"].get("ace_email") if "suppliers" in st.secrets else None
 EMAIL_PAYNGO = st.secrets["suppliers"].get("payngo_email") if "suppliers" in st.secrets else None
 INSTALLATION_PHONE = st.secrets["ultramsg"].get("installation_phone", "0528448382") if "ultramsg" in st.secrets else "0528448382"
 
-# חיבור ל-DB
 def get_db_connection():
     return psycopg2.connect(
         host=st.secrets["supabase"]["DB_HOST"],
@@ -94,12 +90,11 @@ def get_db_connection():
     )
 
 # -------------------------------------------
-# 📥 טעינת נתונים (Load Data) - גרסת SQL
+# 📥 טעינת נתונים
 # -------------------------------------------
 @st.cache_data(ttl=600)
 def load_data():
     conn = get_db_connection()
-    # שולפים הכל, כולל הלוג
     query = """
         SELECT 
             order_num, customer_name, phone, city, street, house_num, 
@@ -109,61 +104,43 @@ def load_data():
     df = pd.read_sql(query, conn)
     conn.close()
 
-    # שינוי שמות העמודות לעברית (כמו שהאפליקציה רגילה)
     df = df.rename(columns=SQL_TO_APP_COLS)
-    
-    # טיפול בערכים חסרים
     df = df.fillna("")
-    
-    # וידוא שיש עמודת לוג
     if LOG_COLUMN_NAME not in df.columns:
         df[LOG_COLUMN_NAME] = ""
         
     return df
 
 # -------------------------------------------
-# 📝 עדכון לוג (Write-Back) - גרסת SQL
+# 📝 עדכון לוג
 # -------------------------------------------
 def update_log_in_db(order_num, sku, message):
-    """
-    מעדכן את הלוג ב-SQL עבור הזמנה ומק"ט ספציפיים
-    """
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
         timestamp = datetime.now().strftime("%d/%m %H:%M")
         new_entry = f"{message} ({timestamp})"
         
-        # 1. קודם שולפים את הלוג הקיים
         select_sql = "SELECT message_log FROM orders WHERE order_num = %s AND sku = %s"
         cursor.execute(select_sql, (str(order_num), str(sku)))
         result = cursor.fetchone()
-        
         current_log = result[0] if result and result[0] else ""
         
-        # שרשור הלוג החדש
-        if current_log:
-            full_log = f"{current_log} | {new_entry}"
-        else:
-            full_log = new_entry
+        if current_log: full_log = f"{current_log} | {new_entry}"
+        else: full_log = new_entry
             
-        # 2. עדכון
         update_sql = "UPDATE orders SET message_log = %s WHERE order_num = %s AND sku = %s"
         cursor.execute(update_sql, (full_log, str(order_num), str(sku)))
         conn.commit()
-        
         cursor.close()
         conn.close()
-        
-        load_data.clear() # מנקה את הזיכרון כדי שיראו את העדכון
+        load_data.clear()
         return full_log
-        
     except Exception as e:
         st.error(f"שגיאה בעדכון מסד הנתונים: {e}")
         return None
 
-# --- פונקציות עזר (ניקוי וכו') ---
+# --- פונקציות עזר ---
 
 def normalize_phone(phone_input):
     if not phone_input: return ""
@@ -189,8 +166,24 @@ def clean_input_garbage(val):
         cleaned_val = cleaned_val.replace(char, '')
     return cleaned_val.strip()
 
-# --- פונקציות שליחה (וואטסאפ / מייל) ---
+def format_date_il(d):
+    """ממיר תאריך SQL לפורמט ישראלי"""
+    if not d: return ""
+    try:
+        # מנסה להמיר ל-datetime ואז לסטרינג
+        dt = pd.to_datetime(d)
+        return dt.strftime('%d/%m/%Y')
+    except:
+        return str(d)
 
+def format_quantity(q):
+    """מנקה אפסים אחרי הנקודה"""
+    try:
+        return str(int(float(q)))
+    except:
+        return str(q).replace('.0', '')
+
+# --- שליחה ---
 def send_whatsapp_message(phone, message_body):
     if "ultramsg" not in st.secrets:
         st.error("חסרות הגדרות UltraMsg ב-Secrets.")
@@ -236,7 +229,7 @@ def send_custom_email(subject_line, body_text="", target_email=None):
         return False
 
 # ==========================================
-# 🖥️ ממשק המשתמש (UI)
+# 🖥️ ממשק משתמש
 # ==========================================
 st.markdown("""
 <style>
@@ -271,18 +264,17 @@ if search_query:
 
     conditions = []
     
-    # חיפוש הזמנה
-    mask_order = df['מספר הזמנה'].astype(str).str.contains(clean_text_query, case=False, na=False)
+    # 1. חיפוש הזמנה (תיקון: regex=False מונע קריסה מסימנים מיוחדים)
+    mask_order = df['מספר הזמנה'].astype(str).str.contains(clean_text_query, case=False, na=False, regex=False)
     conditions.append(mask_order)
 
-    # חיפוש משלוח
+    # 2. חיפוש משלוח (regex=False)
     if 'סטטוס משלוח' in df.columns:
-        mask_tracking = df['סטטוס משלוח'].astype(str).str.contains(clean_text_query, case=False, na=False)
+        mask_tracking = df['סטטוס משלוח'].astype(str).str.contains(clean_text_query, case=False, na=False, regex=False)
         conditions.append(mask_tracking)
 
-    # חיפוש טלפון
+    # 3. חיפוש טלפון
     if clean_phone_query and 'טלפון' in df.columns:
-        # מנרמלים את העמודה ב-DB לחיפוש
         phone_col_norm = df['טלפון'].astype(str).apply(normalize_phone)
         mask_phone = phone_col_norm == clean_phone_query
         conditions.append(mask_phone)
@@ -293,7 +285,7 @@ if search_query:
 
     # --- הצגת תוצאות ---
     if not filtered_df.empty:
-        # מיון לפי תאריך (אם אפשר)
+        # מיון לפי תאריך
         try:
             filtered_df['temp_date'] = pd.to_datetime(filtered_df['תאריך'], errors='coerce')
             filtered_df = filtered_df.sort_values(by='temp_date', ascending=False)
@@ -302,7 +294,10 @@ if search_query:
         display_rows = []
         for index, row in filtered_df.iterrows():
             order_num = str(row['מספר הזמנה']).strip()
-            qty = str(row['כמות']).strip()
+            
+            # תיקון כמויות (1.0 -> 1)
+            qty = format_quantity(row['כמות'])
+            
             sku = str(row['מוצר']).strip()
             full_name = str(row['שם לקוח']).strip()
             street = str(row['רחוב']).strip()
@@ -315,9 +310,11 @@ if search_query:
             phone_display = "0" + phone_clean if phone_clean else ""
             
             tracking = str(row['סטטוס משלוח']).strip()
-            if not tracking and "התקנות" in str(row.get('מקור', '')): tracking = "התקנה" # לוגיקה פשוטה אם חסר
+            if not tracking and "התקנות" in str(row.get('מקור', '')): tracking = "התקנה"
             
-            date_val = str(row['תאריך']).strip()
+            # תיקון תאריך (DD/MM/YYYY)
+            date_val = format_date_il(row['תאריך'])
+
             first_name = full_name.split()[0] if full_name else ""
             log_val = str(row.get(LOG_COLUMN_NAME, ""))
             
@@ -335,8 +332,8 @@ if search_query:
                 "_excel_line": f"{order_num}\t{qty}\t{sku}\t{first_name}\t{street}\t{house}\t{city}\t{phone_display}",
                 "_text_line": f"פרטי הזמנה: מספר הזמנה: {order_num}, כמות: {qty}, מק\"ט: {sku}, שם: {full_name}, כתובת: {address_display}, טלפון: {phone_display}, מספר משלוח: {tracking}, תאריך: {date_val}",
                 "_raw_phone": str(phone_raw).strip(),
-                "_order_key": order_num, # מפתח לעדכון
-                "_sku_key": sku          # מפתח לעדכון
+                "_order_key": order_num,
+                "_sku_key": sku
             })
         
         display_df = pd.DataFrame(display_rows)
@@ -359,13 +356,8 @@ if search_query:
         )
 
         selected_indices = edited_df[edited_df["בחר"] == True].index
-        if selected_indices.empty:
-            rows_for_action = display_df 
-            is_implicit_select_all = True
-        else:
-            rows_for_action = display_df.loc[selected_indices]
-            is_implicit_select_all = False
-            
+        rows_for_action = display_df.loc[selected_indices] if not selected_indices.empty else display_df 
+        is_implicit_select_all = selected_indices.empty
         show_bulk_warning = (is_implicit_select_all and len(rows_for_action) > 10)
 
         # --- כפתורים ---
