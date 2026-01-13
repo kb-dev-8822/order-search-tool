@@ -1,53 +1,31 @@
 import streamlit as st
 import pandas as pd
-import gspread
-from google.oauth2.service_account import Credentials
+import psycopg2
+import requests
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 import time
-import requests
+import re
 
-# --- הגדרת תצוגה רחבה ---
+# --- הגדרת תצוגה ---
 st.set_page_config(layout="wide", page_title="איתור הזמנות", page_icon="🔎")
 
-# --- מנגנון אבטחה (Login) ---
-# --- מנגנון אבטחה (Login) ---
+# ==========================================
+# 🔐 מנגנון אבטחה (Login)
+# ==========================================
 def check_password():
-    # הזרקת CSS אגרסיבי ליישור לימין
     st.markdown("""
         <style>
-            /* יישור כותרות (כמו 'התחברות למערכת') לימין */
-            h1, h2, h3, h4, h5, h6 {
+            h1, h2, h3, h4, h5, h6, .stTextInput > label, .stTextInput input, div[data-testid="stMarkdownContainer"] p {
                 direction: rtl !important;
                 text-align: right !important;
             }
-            
-            /* יישור טקסט רגיל לימין */
-            div[data-testid="stMarkdownContainer"] p {
-                direction: rtl !important;
-                text-align: right !important;
-            }
-            
-            /* יישור הכותרת של שדה הסיסמה ('הזמן סיסמה') */
             .stTextInput > label {
-                direction: rtl !important;
-                text-align: right !important;
                 width: 100%;
                 display: flex;
-                justify-content: flex-start; /* ב-RTL זה אומר ימין */
-            }
-            
-            /* יישור הטקסט שכותבים בתוך השדה */
-            .stTextInput input {
-                direction: rtl !important;
-                text-align: right !important;
-            }
-            
-            /* הזזה של כל הבלוקים לימין */
-            .stElementContainer {
-                direction: rtl !important;
+                justify-content: flex-start;
             }
         </style>
     """, unsafe_allow_html=True)
@@ -65,15 +43,11 @@ def check_password():
 
     if "password_correct" not in st.session_state:
         st.markdown("### 🔒 התחברות למערכת")
-        st.text_input(
-            "הזמן סיסמה", type="password", on_change=password_entered, key="password"
-        )
+        st.text_input("הזמן סיסמה", type="password", on_change=password_entered, key="password")
         return False
     elif not st.session_state["password_correct"]:
         st.markdown("### 🔒 התחברות למערכת")
-        st.text_input(
-            "הזמן סיסמה", type="password", on_change=password_entered, key="password"
-        )
+        st.text_input("הזמן סיסמה", type="password", on_change=password_entered, key="password")
         st.error("❌ סיסמה שגויה")
         return False
     else:
@@ -82,130 +56,155 @@ def check_password():
 if not check_password():
     st.stop()
 
-# --- הגדרות קבועות ---
-SPREADSHEET_ID = '1xUABIGIhnLxO2PYrpAOXZdk48Q-hNYOHkht2vUyaVdE'
-WORKSHEET_NAME = "הזמנות"
+# ==========================================
+# ⚙️ הגדרות וחיבורים
+# ==========================================
+
+# שמות עמודות ב-SQL מול שמות באפליקציה
+SQL_TO_APP_COLS = {
+    'order_num': 'מספר הזמנה',
+    'customer_name': 'שם לקוח',
+    'phone': 'טלפון',
+    'city': 'עיר',
+    'street': 'רחוב',
+    'house_num': 'מספר בית',
+    'sku': 'מוצר', # ב-SQL זה sku
+    'quantity': 'כמות',
+    'shipping_num': 'סטטוס משלוח',
+    'order_date': 'תאריך',
+    'message_log': 'לוג מיילים'
+}
+
 LOG_COLUMN_NAME = "לוג מיילים"
 
-# --- טעינת כתובות מייל מהסודות ---
-if "suppliers" in st.secrets:
-    EMAIL_ACE = st.secrets["suppliers"].get("ace_email")
-    EMAIL_PAYNGO = st.secrets["suppliers"].get("payngo_email")
-else:
-    EMAIL_ACE = None
-    EMAIL_PAYNGO = None
+# פרטי מיילים וטלפון מסודות
+EMAIL_ACE = st.secrets["suppliers"].get("ace_email") if "suppliers" in st.secrets else None
+EMAIL_PAYNGO = st.secrets["suppliers"].get("payngo_email") if "suppliers" in st.secrets else None
+INSTALLATION_PHONE = st.secrets["ultramsg"].get("installation_phone", "0528448382") if "ultramsg" in st.secrets else "0528448382"
 
-# טעינת טלפון מתקין (עם ברירת מחדל אם לא הוגדר)
-if "ultramsg" in st.secrets:
-    INSTALLATION_PHONE = st.secrets["ultramsg"].get("installation_phone", "0528448382")
-else:
-    INSTALLATION_PHONE = "0528448382"
+# חיבור ל-DB
+def get_db_connection():
+    return psycopg2.connect(
+        host=st.secrets["supabase"]["DB_HOST"],
+        port=st.secrets["supabase"]["DB_PORT"],
+        database=st.secrets["supabase"]["DB_NAME"],
+        user=st.secrets["supabase"]["DB_USER"],
+        password=st.secrets["supabase"]["DB_PASS"],
+        sslmode='require'
+    )
 
 # -------------------------------------------
-
-@st.cache_data # ללא ttl - מקסימום מהירות
+# 📥 טעינת נתונים (Load Data) - גרסת SQL
+# -------------------------------------------
+@st.cache_data(ttl=600)
 def load_data():
-    scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    
-    if "gcp_service_account" in st.secrets:
-        creds_dict = st.secrets["gcp_service_account"]
-        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-    else:
-        st.error("לא נמצא מפתח חיבור (Secrets - GCP). נא להגדיר אותו.")
-        st.stop()
+    conn = get_db_connection()
+    # שולפים הכל, כולל הלוג
+    query = """
+        SELECT 
+            order_num, customer_name, phone, city, street, house_num, 
+            sku, quantity, shipping_num, order_date, message_log
+        FROM orders
+    """
+    df = pd.read_sql(query, conn)
+    conn.close()
 
-    client = gspread.authorize(creds)
+    # שינוי שמות העמודות לעברית (כמו שהאפליקציה רגילה)
+    df = df.rename(columns=SQL_TO_APP_COLS)
     
-    try:
-        sh = client.open_by_key(SPREADSHEET_ID)
-        sheet = sh.worksheet(WORKSHEET_NAME)
-    except gspread.WorksheetNotFound:
-        raise ValueError(f"לא נמצאה לשונית בשם '{WORKSHEET_NAME}' בגיליון.")
+    # טיפול בערכים חסרים
+    df = df.fillna("")
     
-    data = sheet.get_all_values()
-    if not data:
-        raise ValueError("הגיליון ריק")
-
-    headers = data[0]
-    df = pd.DataFrame(data[1:], columns=headers)
-    
-    df['original_row_idx'] = range(2, len(data) + 1)
-    
+    # וידוא שיש עמודת לוג
     if LOG_COLUMN_NAME not in df.columns:
         df[LOG_COLUMN_NAME] = ""
         
     return df
 
-# --- Write-Back ---
-def update_log_in_sheet(row_idx, message):
-    scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    creds_dict = st.secrets["gcp_service_account"]
-    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-    client = gspread.authorize(creds)
-    
-    sh = client.open_by_key(SPREADSHEET_ID)
-    sheet = sh.worksheet(WORKSHEET_NAME)
-    
-    headers = sheet.row_values(1)
+# -------------------------------------------
+# 📝 עדכון לוג (Write-Back) - גרסת SQL
+# -------------------------------------------
+def update_log_in_db(order_num, sku, message):
+    """
+    מעדכן את הלוג ב-SQL עבור הזמנה ומק"ט ספציפיים
+    """
     try:
-        col_idx = headers.index(LOG_COLUMN_NAME) + 1
-    except ValueError:
-        col_idx = len(headers) + 1
-        sheet.update_cell(1, col_idx, LOG_COLUMN_NAME)
+        conn = get_db_connection()
+        cursor = conn.cursor()
         
-    current_val = sheet.cell(row_idx, col_idx).value or ""
-    
-    timestamp = datetime.now().strftime("%d/%m %H:%M")
-    new_entry = f"{message} ({timestamp})"
-    
-    if current_val:
-        full_msg = f"{current_val} | {new_entry}"
-    else:
-        full_msg = new_entry
-    
-    sheet.update_cell(row_idx, col_idx, full_msg)
-    load_data.clear()
-    return full_msg
+        timestamp = datetime.now().strftime("%d/%m %H:%M")
+        new_entry = f"{message} ({timestamp})"
+        
+        # 1. קודם שולפים את הלוג הקיים
+        select_sql = "SELECT message_log FROM orders WHERE order_num = %s AND sku = %s"
+        cursor.execute(select_sql, (str(order_num), str(sku)))
+        result = cursor.fetchone()
+        
+        current_log = result[0] if result and result[0] else ""
+        
+        # שרשור הלוג החדש
+        if current_log:
+            full_log = f"{current_log} | {new_entry}"
+        else:
+            full_log = new_entry
+            
+        # 2. עדכון
+        update_sql = "UPDATE orders SET message_log = %s WHERE order_num = %s AND sku = %s"
+        cursor.execute(update_sql, (full_log, str(order_num), str(sku)))
+        conn.commit()
+        
+        cursor.close()
+        conn.close()
+        
+        load_data.clear() # מנקה את הזיכרון כדי שיראו את העדכון
+        return full_log
+        
+    except Exception as e:
+        st.error(f"שגיאה בעדכון מסד הנתונים: {e}")
+        return None
 
-# --- פונקציות וואטסאפ (UltraMsg) ---
+# --- פונקציות עזר (ניקוי וכו') ---
+
+def normalize_phone(phone_input):
+    if not phone_input: return ""
+    clean_digits = ''.join(filter(str.isdigit, str(phone_input)))
+    if clean_digits.startswith('972'): clean_digits = clean_digits[3:]
+    if clean_digits.startswith('0'): return clean_digits[1:]
+    return clean_digits
 
 def normalize_phone_for_api(phone_input):
     if not phone_input: return None
     digits = ''.join(filter(str.isdigit, str(phone_input)))
     if not digits: return None
-    if digits.startswith('972'):
-        return digits 
-    if digits.startswith('0'):
-        return '972' + digits[1:] 
-    if len(digits) == 9:
-        return '972' + digits
+    if digits.startswith('972'): return digits 
+    if digits.startswith('0'): return '972' + digits[1:] 
+    if len(digits) == 9: return '972' + digits
     return digits 
+
+def clean_input_garbage(val):
+    if not isinstance(val, str): val = str(val)
+    garbage_chars = ['\u200f', '\u200e', '\u202a', '\u202b', '\u202c', '\u202d', '\u202e', '\u00a0', '\t', '\n', '\r']
+    cleaned_val = val
+    for char in garbage_chars:
+        cleaned_val = cleaned_val.replace(char, '')
+    return cleaned_val.strip()
+
+# --- פונקציות שליחה (וואטסאפ / מייל) ---
 
 def send_whatsapp_message(phone, message_body):
     if "ultramsg" not in st.secrets:
         st.error("חסרות הגדרות UltraMsg ב-Secrets.")
         return False
-
     instance_id = st.secrets["ultramsg"]["instance_id"]
     token = st.secrets["ultramsg"]["token"]
-    
     clean_phone = normalize_phone_for_api(phone)
-    if not clean_phone:
-        return False
-        
+    if not clean_phone: return False
     url = f"https://api.ultramsg.com/{instance_id}/messages/chat"
-    
-    payload = {
-        "token": token,
-        "to": clean_phone,
-        "body": message_body
-    }
-    
+    payload = {"token": token, "to": clean_phone, "body": message_body}
     try:
         headers = {'content-type': 'application/x-www-form-urlencoded'}
         response = requests.post(url, data=payload, headers=headers)
-        if response.status_code == 200 and 'sent' in response.text:
-            return True
+        if response.status_code == 200 and 'sent' in response.text: return True
         else:
             st.error(f"שגיאה בשליחת וואטסאפ: {response.text}")
             return False
@@ -213,24 +212,18 @@ def send_whatsapp_message(phone, message_body):
         st.error(f"תקלה בשליחה: {e}")
         return False
 
-# --- פונקציות מייל ---
-
 def send_custom_email(subject_line, body_text="", target_email=None):
     if "email" not in st.secrets:
         st.error("חסרות הגדרות אימייל ב-Secrets.")
         return False
-
     sender = st.secrets["email"]["sender_address"]
     password = st.secrets["email"]["password"]
-    
     recipient = target_email if target_email else st.secrets["email"]["recipient_address"]
-
     msg = MIMEMultipart()
     msg['From'] = sender
     msg['To'] = recipient
     msg['Subject'] = subject_line
     msg.attach(MIMEText(body_text, 'plain', 'utf-8'))
-
     try:
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
@@ -242,66 +235,35 @@ def send_custom_email(subject_line, body_text="", target_email=None):
         st.error(f"שגיאה בשליחת מייל: {e}")
         return False
 
-# --- פונקציות ניקוי ---
-
-def normalize_phone(phone_input):
-    if not phone_input: return ""
-    clean_digits = ''.join(filter(str.isdigit, str(phone_input)))
-    if clean_digits.startswith('972'):
-        clean_digits = clean_digits[3:]
-    if clean_digits.startswith('0'):
-        return clean_digits[1:]
-    return clean_digits
-
-def clean_input_garbage(val):
-    if not isinstance(val, str): val = str(val)
-    garbage_chars = ['\u200f', '\u200e', '\u202a', '\u202b', '\u202c', '\u202d', '\u202e', '\u00a0', '\t', '\n', '\r']
-    cleaned_val = val
-    for char in garbage_chars:
-        cleaned_val = cleaned_val.replace(char, '')
-    return cleaned_val.strip()
-
-# --- עיצוב CSS ---
+# ==========================================
+# 🖥️ ממשק המשתמש (UI)
+# ==========================================
 st.markdown("""
 <style>
     .stApp { direction: rtl; }
     .stMarkdown, h1, h3, h2, p, label, .stRadio { text-align: right !important; direction: rtl !important; }
     .stTextInput input { direction: rtl; text-align: right; }
-    
     div[data-testid="stDataEditor"] th { text-align: right !important; direction: rtl !important; }
     div[data-testid="stDataEditor"] td { text-align: right !important; direction: rtl !important; }
-    div[class*="stDataEditor"] div[role="columnheader"] { justify-content: flex-end; }
-    div[class*="stDataEditor"] div[role="gridcell"] { text-align: right; direction: rtl; justify-content: flex-end; }
-    
     code { text-align: right !important; white-space: pre-wrap !important; direction: rtl !important; }
-    
-    .stButton button {
-        width: 100%;
-        border-radius: 6px;
-        height: 3em; 
-    }
-    
-    .block-container {
-        padding-top: 2rem;
-        padding-bottom: 1rem;
-    }
+    .stButton button { width: 100%; border-radius: 6px; height: 3em; }
+    .block-container { padding-top: 2rem; padding-bottom: 1rem; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🔎 איתור הזמנות מהיר")
+st.title("🔎 איתור הזמנות מהיר (SQL)")
 
 try:
-    with st.spinner('טוען נתונים...'):
+    with st.spinner('טוען נתונים מהענן...'):
         df = load_data()
-    st.success(f"הנתונים נטענו בהצלחה! סה\"כ {len(df)} שורות.")
+    st.success(f"הנתונים נטענו בהצלחה! סה\"כ {len(df)} שורות בהיסטוריה.")
 except Exception as e:
-    st.error(f"שגיאה: {e}")
+    st.error(f"שגיאה בטעינה: {e}")
     st.stop()
 
 # --- חיפוש ---
 search_query = st.text_input("הכנס טלפון, מספר הזמנה או מספר משלוח:", "")
 
-# --- לוגיקה ---
 if search_query:
     filtered_df = pd.DataFrame()
     clean_text_query = clean_input_garbage(search_query)
@@ -309,90 +271,76 @@ if search_query:
 
     conditions = []
     
-    def check_order_match(val, query):
-        val = str(val).strip()
-        if val == query:
-            return True
-        if '-' in val:
-            parts = val.split('-')
-            if parts[0].strip() == query:
-                return True
-        return False
+    # חיפוש הזמנה
+    mask_order = df['מספר הזמנה'].astype(str).str.contains(clean_text_query, case=False, na=False)
+    conditions.append(mask_order)
 
-    if df.shape[1] > 0:
-        col_orders = df.iloc[:, 0].astype(str).apply(clean_input_garbage)
-        mask_order = col_orders.apply(lambda x: check_order_match(x, clean_text_query))
-        conditions.append(mask_order)
-
-    if df.shape[1] > 8:
-        col_tracking = df.iloc[:, 8].astype(str).apply(clean_input_garbage)
-        mask_tracking = col_tracking == clean_text_query
+    # חיפוש משלוח
+    if 'סטטוס משלוח' in df.columns:
+        mask_tracking = df['סטטוס משלוח'].astype(str).str.contains(clean_text_query, case=False, na=False)
         conditions.append(mask_tracking)
 
-    if df.shape[1] > 7:
-        if clean_phone_query: 
-            mask_phone = df.iloc[:, 7].astype(str).apply(normalize_phone) == clean_phone_query
-            conditions.append(mask_phone)
+    # חיפוש טלפון
+    if clean_phone_query and 'טלפון' in df.columns:
+        # מנרמלים את העמודה ב-DB לחיפוש
+        phone_col_norm = df['טלפון'].astype(str).apply(normalize_phone)
+        mask_phone = phone_col_norm == clean_phone_query
+        conditions.append(mask_phone)
 
     if conditions:
-        final_mask = conditions[0]
-        for condition in conditions[1:]:
-            final_mask = final_mask | condition
+        final_mask = pd.concat(conditions, axis=1).any(axis=1)
         filtered_df = df[final_mask].copy()
 
     # --- הצגת תוצאות ---
     if not filtered_df.empty:
-        if df.shape[1] > 9:
-            try:
-                filtered_df['temp_date'] = pd.to_datetime(filtered_df.iloc[:, 9], dayfirst=True, errors='coerce')
-                filtered_df = filtered_df.sort_values(by='temp_date', ascending=True)
-            except: pass
+        # מיון לפי תאריך (אם אפשר)
+        try:
+            filtered_df['temp_date'] = pd.to_datetime(filtered_df['תאריך'], errors='coerce')
+            filtered_df = filtered_df.sort_values(by='temp_date', ascending=False)
+        except: pass
 
         display_rows = []
         for index, row in filtered_df.iterrows():
-            try:
-                order_num = str(row.iloc[0]).strip()
-                qty = str(row.iloc[1]).strip()
-                sku = str(row.iloc[2]).strip()
-                full_name = str(row.iloc[3]).strip()
-                street = str(row.iloc[4]).strip() if pd.notna(row.iloc[4]) else ""
-                house = str(row.iloc[5]).strip() if pd.notna(row.iloc[5]) else ""
-                city = str(row.iloc[6]).strip() if pd.notna(row.iloc[6]) else ""
-                address_display = f"{street} {house} {city}".strip()
-                phone_raw = row.iloc[7]
-                phone_clean = normalize_phone(phone_raw)
-                phone_display = "0" + phone_clean if phone_clean else ""
-                tracking = row.iloc[8]
-                if pd.isna(tracking) or str(tracking).strip() == "": tracking = "התקנה"
-                date_val = str(row.iloc[9]).strip()
-                first_name = full_name.split()[0] if full_name else ""
-                
-                log_val = str(row.get(LOG_COLUMN_NAME, ""))
-                original_idx = row.get('original_row_idx', 0)
-                
-                raw_phone_for_wa = str(phone_raw).strip()
-
-                display_rows.append({
-                    "מספר הזמנה": order_num,
-                    "שם לקוח": full_name,
-                    "טלפון": phone_display,
-                    "כתובת מלאה": address_display,
-                    "מוצר": sku,
-                    "כמות": qty,
-                    "סטטוס משלוח": tracking,
-                    "תאריך": date_val,
-                    LOG_COLUMN_NAME: log_val,
-                    "בחר": False,
-                    "_excel_line": f"{order_num}\t{qty}\t{sku}\t{first_name}\t{street}\t{house}\t{city}\t{phone_display}",
-                    "_text_line": f"פרטי הזמנה: מספר הזמנה: {order_num}, כמות: {qty}, מק\"ט: {sku}, שם: {full_name}, כתובת: {address_display}, טלפון: {phone_display}, מספר משלוח: {tracking}, תאריך: {date_val}",
-                    "_original_row": original_idx,
-                    "_raw_phone": raw_phone_for_wa
-                })
-            except IndexError: continue
+            order_num = str(row['מספר הזמנה']).strip()
+            qty = str(row['כמות']).strip()
+            sku = str(row['מוצר']).strip()
+            full_name = str(row['שם לקוח']).strip()
+            street = str(row['רחוב']).strip()
+            house = str(row['מספר בית']).strip()
+            city = str(row['עיר']).strip()
+            address_display = f"{street} {house} {city}".strip()
+            
+            phone_raw = row['טלפון']
+            phone_clean = normalize_phone(phone_raw)
+            phone_display = "0" + phone_clean if phone_clean else ""
+            
+            tracking = str(row['סטטוס משלוח']).strip()
+            if not tracking and "התקנות" in str(row.get('מקור', '')): tracking = "התקנה" # לוגיקה פשוטה אם חסר
+            
+            date_val = str(row['תאריך']).strip()
+            first_name = full_name.split()[0] if full_name else ""
+            log_val = str(row.get(LOG_COLUMN_NAME, ""))
+            
+            display_rows.append({
+                "מספר הזמנה": order_num,
+                "שם לקוח": full_name,
+                "טלפון": phone_display,
+                "כתובת מלאה": address_display,
+                "מוצר": sku,
+                "כמות": qty,
+                "סטטוס משלוח": tracking,
+                "תאריך": date_val,
+                LOG_COLUMN_NAME: log_val,
+                "בחר": False,
+                "_excel_line": f"{order_num}\t{qty}\t{sku}\t{first_name}\t{street}\t{house}\t{city}\t{phone_display}",
+                "_text_line": f"פרטי הזמנה: מספר הזמנה: {order_num}, כמות: {qty}, מק\"ט: {sku}, שם: {full_name}, כתובת: {address_display}, טלפון: {phone_display}, מספר משלוח: {tracking}, תאריך: {date_val}",
+                "_raw_phone": str(phone_raw).strip(),
+                "_order_key": order_num, # מפתח לעדכון
+                "_sku_key": sku          # מפתח לעדכון
+            })
         
         display_df = pd.DataFrame(display_rows)
         
-        # --- סידור עמודות (בדיוק כמו בקוד ששלחת) ---
         cols_order = [LOG_COLUMN_NAME, "סטטוס משלוח", "מוצר", "כמות", "מספר הזמנה", "בחר"]
         
         edited_df = st.data_editor(
@@ -411,7 +359,6 @@ if search_query:
         )
 
         selected_indices = edited_df[edited_df["בחר"] == True].index
-
         if selected_indices.empty:
             rows_for_action = display_df 
             is_implicit_select_all = True
@@ -419,247 +366,131 @@ if search_query:
             rows_for_action = display_df.loc[selected_indices]
             is_implicit_select_all = False
             
-        if is_implicit_select_all and len(rows_for_action) > 10:
-            show_bulk_warning = True
-        else:
-            show_bulk_warning = False
+        show_bulk_warning = (is_implicit_select_all and len(rows_for_action) > 10)
 
-        # --- אזור הכפתורים (השינוי: 6 עמודות + gap small) ---
+        # --- כפתורים ---
         col_wa_policy, col_wa_contact, col_wa_install, col_mail_status, col_mail_return, col_mail_supplier = st.columns(6, gap="small")
         
-        # 1. וואטסאפ מדיניות
+        # 1. מדיניות
         with col_wa_policy:
-            if show_bulk_warning: st.warning("⚠️ סמן ידנית")
-            else:
-                if st.button("💬 שלח מדיניות"):
-                    if rows_for_action.empty: st.toast("⚠️ אין נתונים")
-                    else:
-                        count_sent = 0
-                        rows_to_update_log = []
-                        grouped = rows_for_action.groupby('_raw_phone')
-                        for phone, group in grouped:
-                            if not phone: continue
-                            orders_str = ", ".join(group['מספר הזמנה'].unique())
-                            skus_str = ", ".join(group['מוצר'].unique())
-                            client_name = group.iloc[0]['שם לקוח'].split()[0] if group.iloc[0]['שם לקוח'] else "לקוח"
-                            msg_body = f"""שלום {client_name},
-מדברים לגבי הזמנה/ות: {orders_str}.
-מוצרים: {skus_str}.
+            if not show_bulk_warning and st.button("💬 שלח מדיניות"):
+                if rows_for_action.empty: st.toast("⚠️ אין נתונים")
+                else:
+                    count = 0
+                    for phone, group in rows_for_action.groupby('_raw_phone'):
+                        if not phone: continue
+                        orders_str = ", ".join(group['מספר הזמנה'].unique())
+                        skus_str = ", ".join(group['מוצר'].unique())
+                        client_name = group.iloc[0]['שם לקוח'].split()[0] if group.iloc[0]['שם לקוח'] else "לקוח"
+                        msg_body = f"""שלום {client_name},
+מדברים לגבי הזמנה/ות: {orders_str}. מוצרים: {skus_str}.
 הבנתי שיש בעיה במוצר/ים (פגם או חוסר בחלקים) או שאתה פשוט מעוניין להחזיר.
 
-שים לב לאפשרויות הטיפול:
-1. אם זו *החזרה רגילה* (מוצר לא פגום) - הזיכוי יהיה בניכוי דמי משלוח (99 ש"ח) על כל חבילה שחוזרת. אנא שלח לנו תמונה של המוצר כשהוא ארוז חזרה עם מסקינטייפ, כדי שנוכל לתאם שליח לאיסוף (עד 7 ימי עסקים מרגע קבלת התמונה).
-
-2. אם זה *מוצר פגום* - אנא שלח לנו תמונות ברורות של הפגמים, ונציג מטעמנו יחזור אליך לגבי המשך הטיפול (עד 3 ימי עסקים).
-
-3. במידה ו*חסרים חלקים* - נא לשלוח לנו את מספרי החלקים החסרים במדויק לפי דף ההוראות (מופיע בחוברת ההרכבה), ונדאג להשלים לך אותם.
-
+1. החזרה רגילה (ניכוי דמי משלוח 99 ש"ח). נא לשלוח תמונה כשהוא ארוז.
+2. מוצר פגום - שלח תמונות ברורות.
+3. חסרים חלקים - שלח מספרי חלקים לפי החוברת.
 תודה!"""
-                            if send_whatsapp_message(phone, msg_body):
-                                count_sent += 1
-                                rows_to_update_log.extend(group['_original_row'].tolist())
-                                st.toast(f"נשלח ל-{client_name} ✅")
-                        if count_sent > 0:
-                            for r_idx in rows_to_update_log: update_log_in_sheet(r_idx, "💬 נשלח ווצאפ מדיניות")
-                            time.sleep(1)
-                            st.rerun()
-
-        # 2. וואטסאפ "חזרנו אליך"
-        with col_wa_contact:
-            if show_bulk_warning: st.warning("⚠️ סמן ידנית")
-            else:
-                if st.button("📞 חזרנו אליך"):
-                    if rows_for_action.empty: st.toast("⚠️ אין נתונים")
-                    else:
-                        count_sent = 0
-                        rows_to_update_log = []
-                        grouped = rows_for_action.groupby('_raw_phone')
-                        for phone, group in grouped:
-                            if not phone: continue
-                            orders_str = ", ".join(group['מספר הזמנה'].unique())
-                            skus_str = ", ".join(group['מוצר'].unique())
-                            tracking_str = ", ".join(group['סטטוס משלוח'].unique())
-                            client_name = group.iloc[0]['שם לקוח'].split()[0] if group.iloc[0]['שם לקוח'] else "לקוח"
-                            msg_body = f"""היי {client_name},
-חוזרים אלייך מסלימפרייס לגבי הזמנה/ות: {orders_str}
-מוצרים: {skus_str}
-מס משלוח/ים: {tracking_str}
-
-קיבלנו פנייה שחיפשת אותנו, איך אפשר לעזור?"""
-                            if send_whatsapp_message(phone, msg_body):
-                                count_sent += 1
-                                rows_to_update_log.extend(group['_original_row'].tolist())
-                                st.toast(f"נשלח ל-{client_name} ✅")
-                        if count_sent > 0:
-                            for r_idx in rows_to_update_log: update_log_in_sheet(r_idx, "💬 נשלח 'חזרנו אליך'")
-                            time.sleep(1)
-                            st.rerun()
-
-        # 3. וואטסאפ התקנה (התוספת היחידה)
-        with col_wa_install:
-            if show_bulk_warning: st.warning("⚠️ סמן ידנית")
-            else:
-                if st.button("🔧 התקנה"):
-                    if rows_for_action.empty: st.toast("⚠️ אין נתונים")
-                    else:
-                        rows_to_update_log = []
-                        grouped = rows_for_action.groupby('מספר הזמנה')
-                        all_install_messages = []
-                        
-                        for order_num, group in grouped:
-                            first_row = group.iloc[0]
-                            name = first_row['שם לקוח']
-                            address = first_row['כתובת מלאה']
-                            phone = first_row['טלפון']
-                            items_list = []
+                        if send_whatsapp_message(phone, msg_body):
+                            count += 1
                             for _, r in group.iterrows():
-                                items_list.append(f"{r['כמות']} X {r['מוצר']}")
-                            items_str = ", ".join(items_list)
-                            
-                            line = f"{order_num} | {items_str} | {name} | {address} | {phone} | התקנה"
-                            all_install_messages.append(line)
-                            rows_to_update_log.extend(group['_original_row'].tolist())
-                        
-                        final_msg = "\n\n".join(all_install_messages)
-                        if send_whatsapp_message(INSTALLATION_PHONE, final_msg):
-                            st.toast("נשלח למתקין בהצלחה ✅")
-                            for r_idx in rows_to_update_log: update_log_in_sheet(r_idx, "💬 נשלח למתקין")
-                            time.sleep(1)
-                            st.rerun()
+                                update_log_in_db(r['_order_key'], r['_sku_key'], "💬 נשלח ווצאפ מדיניות")
+                            st.toast(f"נשלח ל-{client_name} ✅")
+                    if count > 0:
+                        time.sleep(1)
+                        st.rerun()
+
+        # 2. חזרנו אליך
+        with col_wa_contact:
+            if not show_bulk_warning and st.button("📞 חזרנו אליך"):
+                if rows_for_action.empty: st.toast("⚠️ אין נתונים")
+                else:
+                    count = 0
+                    for phone, group in rows_for_action.groupby('_raw_phone'):
+                        if not phone: continue
+                        orders_str = ", ".join(group['מספר הזמנה'].unique())
+                        client_name = group.iloc[0]['שם לקוח'].split()[0]
+                        msg_body = f"היי {client_name},\nחוזרים אלייך מסלימפרייס לגבי הזמנה: {orders_str}\nקיבלנו פנייה שחיפשת אותנו, איך אפשר לעזור?"
+                        if send_whatsapp_message(phone, msg_body):
+                            count += 1
+                            for _, r in group.iterrows():
+                                update_log_in_db(r['_order_key'], r['_sku_key'], "💬 נשלח 'חזרנו אליך'")
+                            st.toast(f"נשלח ל-{client_name} ✅")
+                    if count > 0:
+                        time.sleep(1)
+                        st.rerun()
+
+        # 3. התקנה
+        with col_wa_install:
+            if not show_bulk_warning and st.button("🔧 התקנה"):
+                if rows_for_action.empty: st.toast("⚠️ אין נתונים")
+                else:
+                    all_msgs = []
+                    for order_num, group in rows_for_action.groupby('מספר הזמנה'):
+                        r = group.iloc[0]
+                        items = ", ".join([f"{row['כמות']} X {row['מוצר']}" for _, row in group.iterrows()])
+                        line = f"{order_num} | {items} | {r['שם לקוח']} | {r['כתובת מלאה']} | {r['טלפון']} | התקנה"
+                        all_msgs.append(line)
+                    
+                    if send_whatsapp_message(INSTALLATION_PHONE, "\n\n".join(all_msgs)):
+                        st.toast("נשלח למתקין ✅")
+                        for _, r in rows_for_action.iterrows():
+                             update_log_in_db(r['_order_key'], r['_sku_key'], "💬 נשלח למתקין")
+                        time.sleep(1)
+                        st.rerun()
 
         # 4. מייל סטטוס
         with col_mail_status:
-            if show_bulk_warning: st.warning("⚠️ סמן ידנית")
-            else:
-                if st.button("❓ מה קורה?"):
-                    if rows_for_action.empty: st.toast("⚠️ אין נתונים")
-                    else:
-                        tracking_nums = []
-                        rows_to_update = []
-                        duplicate_alert = False
-                        for idx, row in rows_for_action.iterrows():
-                            tn = row['סטטוס משלוח']
-                            if "נשלח בדיקה" in str(row[LOG_COLUMN_NAME]): duplicate_alert = True
-                            if tn and tn != "התקנה":
-                                tracking_nums.append(tn)
-                                rows_to_update.append(row['_original_row'])
-                        if duplicate_alert:
-                            st.toast("⚠️ שים לב: כבר נשלח בעבר")
-                            time.sleep(1)
-                        if not tracking_nums: st.toast("⚠️ אין מספרי משלוח")
-                        else:
-                            tracking_nums = list(set(tracking_nums))
-                            joined_nums = ", ".join(tracking_nums)
-                            subject = f"{joined_nums} מה קורה עם זה בבקשה?" if len(tracking_nums)==1 else f"{joined_nums} מה קורה עם אלה בבקשה?"
-                            if send_custom_email(subject, body_text=""):
-                                st.success(f"נשלח: {subject}")
-                                for r_idx in rows_to_update: update_log_in_sheet(r_idx, "📧 נשלח בדיקה")
-                                time.sleep(1)
-                                st.rerun()
+            if not show_bulk_warning and st.button("❓ מה קורה?"):
+                tn_list = [t for t in rows_for_action['סטטוס משלוח'].unique() if t and t != "התקנה"]
+                if not tn_list: st.toast("⚠️ אין מספרי משלוח")
+                else:
+                    subj = f"{', '.join(tn_list)} מה קורה עם זה?"
+                    if send_custom_email(subj):
+                        st.success("נשלח מייל")
+                        for _, r in rows_for_action.iterrows():
+                            if r['סטטוס משלוח'] in tn_list:
+                                update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח בדיקה")
+                        time.sleep(1)
+                        st.rerun()
 
         # 5. מייל החזרה
         with col_mail_return:
-            if show_bulk_warning: st.warning("⚠️ סמן ידנית")
-            else:
-                if st.button("↩️ להחזיר"):
-                    if rows_for_action.empty: st.toast("⚠️ אין נתונים")
-                    else:
-                        tracking_nums = []
-                        for idx, row in rows_for_action.iterrows():
-                            tn = row['סטטוס משלוח']
-                            if tn and tn != "התקנה": tracking_nums.append(tn)
-                        if not tracking_nums: st.toast("⚠️ אין מספרי משלוח")
-                        else:
-                            tracking_nums = list(set(tracking_nums))
-                            joined_nums = ", ".join(tracking_nums)
-                            subject = f"{joined_nums} להחזיר אלינו בבקשה"
-                            if send_custom_email(subject, body_text=""):
-                                st.success(f"נשלח: {subject}")
+            if not show_bulk_warning and st.button("↩️ להחזיר"):
+                tn_list = [t for t in rows_for_action['סטטוס משלוח'].unique() if t and t != "התקנה"]
+                if not tn_list: st.toast("⚠️ אין מספרי משלוח")
+                else:
+                    if send_custom_email(f"{', '.join(tn_list)} להחזיר אלינו"):
+                        st.success("נשלח מייל להחזרה")
 
-        # 6. כפתור מייל ספקים (אין מענה)
+        # 6. ספקים
         with col_mail_supplier:
-            if show_bulk_warning: st.warning("⚠️ סמן ידנית")
-            else:
-                if st.button("📞 אין מענה - ספקים"):
-                    if rows_for_action.empty: st.toast("⚠️ אין נתונים")
-                    else:
-                        ace_data = {"orders": [], "tracking": [], "phones": [], "rows": []}
-                        payngo_data = {"orders": [], "tracking": [], "phones": [], "rows": []}
-                        found_supplier = False
-                        
-                        for idx, row in rows_for_action.iterrows():
-                            order_num = str(row['מספר הזמנה']).strip()
-                            tracking_num = str(row['סטטוס משלוח']).strip()
-                            phone_num = str(row['טלפון']).strip()
-                            
-                            if order_num.upper().startswith("PO"): # ACE
-                                ace_data["orders"].append(order_num)
-                                if tracking_num and tracking_num != "התקנה": ace_data["tracking"].append(tracking_num)
-                                if phone_num: ace_data["phones"].append(phone_num)
-                                ace_data["rows"].append(row['_original_row'])
-                                found_supplier = True
-                            elif order_num.startswith("9"): # Payngo
-                                payngo_data["orders"].append(order_num)
-                                if tracking_num and tracking_num != "התקנה": payngo_data["tracking"].append(tracking_num)
-                                if phone_num: payngo_data["phones"].append(phone_num)
-                                payngo_data["rows"].append(row['_original_row'])
-                                found_supplier = True
-                        
-                        if not found_supplier:
-                            st.toast("⚠️ לא זוהו הזמנות אייס (PO) או מחסני חשמל (9)")
-                        else:
-                            # ACE
-                            if ace_data["orders"]:
-                                if not EMAIL_ACE:
-                                    st.error("❌ לא הוגדר מייל לאייס בסודות!")
-                                else:
-                                    unique_orders = list(set(ace_data["orders"]))
-                                    unique_tracking = list(set(ace_data["tracking"]))
-                                    unique_phones = list(set(ace_data["phones"]))
-                                    joined_orders = ", ".join(unique_orders)
-                                    joined_tracking = ", ".join(unique_tracking) if unique_tracking else "ללא מס' משלוח"
-                                    joined_phones = ", ".join(unique_phones)
-                                    subject = f"{joined_orders} {joined_tracking} - אין מענה מהלקוח - האם יש מספר טלפון אחר?"
-                                    body = f"הטלפון שיש לנו כרגע הוא: {joined_phones}\nנא בדקו אם יש מספר אחר."
-                                    
-                                    if send_custom_email(subject, body_text=body, target_email=EMAIL_ACE):
-                                        st.toast("נשלח מייל לאייס ✅")
-                                        for r_idx in ace_data["rows"]: update_log_in_sheet(r_idx, "📧 נשלח ספק (אין מענה)")
+            if not show_bulk_warning and st.button("📞 אין מענה"):
+                ace_g = rows_for_action[rows_for_action['מספר הזמנה'].astype(str).str.upper().str.startswith("PO")]
+                pay_g = rows_for_action[rows_for_action['מספר הזמנה'].astype(str).str.startswith("9")]
+                
+                if not ace_g.empty and EMAIL_ACE:
+                    body = f"טלפונים: {', '.join(ace_g['טלפון'].unique())}"
+                    if send_custom_email(f"{', '.join(ace_g['מספר הזמנה'].unique())} - אין מענה - טלפון אחר?", body, EMAIL_ACE):
+                        st.toast("נשלח לאייס")
+                        for _, r in ace_g.iterrows(): update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח ספק")
 
-                            # Payngo
-                            if payngo_data["orders"]:
-                                if not EMAIL_PAYNGO:
-                                    st.error("❌ לא הוגדר מייל למחסני חשמל בסודות!")
-                                else:
-                                    unique_orders = list(set(payngo_data["orders"]))
-                                    unique_tracking = list(set(payngo_data["tracking"]))
-                                    unique_phones = list(set(payngo_data["phones"]))
-                                    joined_orders = ", ".join(unique_orders)
-                                    joined_tracking = ", ".join(unique_tracking) if unique_tracking else "ללא מס' משלוח"
-                                    joined_phones = ", ".join(unique_phones)
-                                    subject = f"{joined_orders} {joined_tracking} - אין מענה מהלקוח - האם יש מספר טלפון אחר?"
-                                    body = f"הטלפון שיש לנו כרגע הוא: {joined_phones}\nנא בדקו אם יש מספר אחר."
-                                    
-                                    if send_custom_email(subject, body_text=body, target_email=EMAIL_PAYNGO):
-                                        st.toast("נשלח מייל למחסני חשמל ✅")
-                                        for r_idx in payngo_data["rows"]: update_log_in_sheet(r_idx, "📧 נשלח ספק (אין מענה)")
-                            
-                            time.sleep(1)
-                            st.rerun()
+                if not pay_g.empty and EMAIL_PAYNGO:
+                    body = f"טלפונים: {', '.join(pay_g['טלפון'].unique())}"
+                    if send_custom_email(f"{', '.join(pay_g['מספר הזמנה'].unique())} - אין מענה - טלפון אחר?", body, EMAIL_PAYNGO):
+                        st.toast("נשלח למחסני חשמל")
+                        for _, r in pay_g.iterrows(): update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח ספק")
+                
+                if ace_g.empty and pay_g.empty: st.toast("לא נמצאו הזמנות ספקים תואמות")
+                else: 
+                    time.sleep(1)
+                    st.rerun()
 
-        # --- העתקה (פתוח תמיד) ---
         st.divider()
         if not rows_for_action.empty and not show_bulk_warning:
-            final_excel_lines = rows_for_action["_excel_line"].tolist()
-            st.caption("העתקה לאקסל (שורות נבחרות):")
-            st.code("\n".join(final_excel_lines), language="csv")
+            st.caption("העתקה לאקסל:")
+            st.code("\n".join(rows_for_action["_excel_line"]), language="csv")
+            st.caption("פרטים מלאים:")
+            st.code("\n".join(rows_for_action["_text_line"]), language=None)
             
-            final_text_lines = rows_for_action["_text_line"].tolist()
-            st.caption("📝 פרטים מלאים להעתקה:")
-            st.code("\n".join(final_text_lines), language=None)
-        
     else:
         st.warning(f"לא נמצאו תוצאות עבור: {clean_text_query}")
-
-
-
