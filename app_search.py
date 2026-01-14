@@ -96,7 +96,7 @@ def get_db_connection():
 # -------------------------------------------
 # 📥 טעינת נתונים
 # -------------------------------------------
-@st.cache_data(ttl=600)
+@st.cache_data
 def load_data():
     conn = get_db_connection()
     # שולפים הכל
@@ -571,3 +571,4 @@ if search_query:
             
     else:
         st.warning(f"לא נמצאו תוצאות עבור: {clean_text_query}")
+
