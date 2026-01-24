@@ -95,7 +95,7 @@ def get_db_connection():
     )
 
 # -------------------------------------------
-# 📥 טעינת נתונים (מה-VIEW החדש)
+# 📥 טעינת נתונים (עם תרגום לעברית)
 # -------------------------------------------
 @st.cache_data
 def load_data():
@@ -110,8 +110,14 @@ def load_data():
     df = pd.read_sql(query, conn)
     conn.close()
 
-    # המרה לעברית
+    # המרה לעברית (שמות עמודות)
     df = df.rename(columns=SQL_TO_APP_COLS)
+    
+    # --- תרגום סוג הזמנה לעברית (רק לתצוגה) ---
+    df['סוג הזמנה'] = df['סוג הזמנה'].replace({
+        'Regular Order': 'הזמנה רגילה',
+        'Pre-Order (Long Delivery)': 'זמן אספקה ארוך'
+    })
     
     # מילוי ריקים
     df = df.fillna("")
@@ -121,15 +127,20 @@ def load_data():
     return df
 
 # -------------------------------------------
-# 📝 עדכון לוג (SQL UPDATE חכם)
+# 📝 עדכון לוג (SQL UPDATE חכם - לפי עברית)
 # -------------------------------------------
-def update_log_in_db(order_num, sku, message, order_type_val="Regular Order"):
+def update_log_in_db(order_num, sku, message, order_type_val="הזמנה רגילה"):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # קביעת טבלת היעד לפי סוג ההזמנה
-        target_table = "pre_orders" if "Pre-Order" in str(order_type_val) else "orders"
+        # קביעת טבלת היעד לפי הטקסט בעברית
+        # אם כתוב "זמן אספקה ארוך" -> הולך ל-pre_orders
+        # אחרת -> הולך ל-orders
+        if "זמן אספקה ארוך" in str(order_type_val):
+            target_table = "pre_orders"
+        else:
+            target_table = "orders"
         
         timestamp = datetime.now().strftime("%d/%m %H:%M")
         new_entry = f"{message} ({timestamp})"
@@ -341,16 +352,16 @@ if search_query:
             phone_clean = normalize_phone(phone_raw)
             phone_display = "0" + phone_clean if phone_clean else ""
             
-            # --- שליפת סוג הזמנה ---
-            order_type_val = str(row.get('סוג הזמנה', 'Regular Order'))
+            # --- שליפת סוג הזמנה (כבר בעברית מה-load_data) ---
+            order_type_val = str(row.get('סוג הזמנה', 'הזמנה רגילה'))
             
-            # --- לוגיקה מעודכנת לסטטוס משלוח ---
+            # --- לוגיקה מעודכנת לסטטוס משלוח (לפי הטקסט החדש בעברית) ---
             tracking = str(row['סטטוס משלוח']).strip()
             if not tracking or tracking == "None":
-                if "Pre-Order" in order_type_val:
-                    tracking = "" # השאר ריק אם זה הזמנה מוקדמת
+                if "זמן אספקה ארוך" in order_type_val:
+                    tracking = "" # השאר ריק אם זה זמן אספקה ארוך
                 else:
-                    tracking = "התקנה" # כתוב התקנה אם זה הזמנה רגילה
+                    tracking = "התקנה" # כתוב התקנה אם זו הזמנה רגילה
             
             log_val = str(row.get(LOG_COLUMN_NAME, ""))
             first_name = full_name.split()[0] if full_name else ""
@@ -386,7 +397,7 @@ if search_query:
             column_config={
                 "בחר": st.column_config.CheckboxColumn("בחר", default=False, width="small"),
                 "מספר הזמנה": st.column_config.TextColumn("מספר הזמנה", width="medium"),
-                "סוג הזמנה": st.column_config.TextColumn("סוג הזמנה", width="medium"), # כאן שונה ל-medium
+                "סוג הזמנה": st.column_config.TextColumn("סוג הזמנה", width="medium"), # הוגדל לבקשתך
                 "כמות": st.column_config.TextColumn("כמות", width="small"),
                 "מוצר": st.column_config.TextColumn("מוצר", width="large"),
                 "סטטוס משלוח": st.column_config.TextColumn("מס משלוח", width="medium"),
