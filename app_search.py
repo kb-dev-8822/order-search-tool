@@ -76,7 +76,8 @@ SQL_TO_APP_COLS = {
     'shipping_num': 'סטטוס משלוח',
     'order_date': 'תאריך',
     'message_log': 'לוג מיילים',
-    'order_type': 'סוג הזמנה'
+    'order_type': 'סוג הזמנה',
+    'delivery_time': 'raw_delivery_time' # שם זמני רק לשליפה
 }
 
 LOG_COLUMN_NAME = "לוג מיילים"
@@ -100,11 +101,11 @@ def get_db_connection():
 @st.cache_data
 def load_data():
     conn = get_db_connection()
-    # שליפה מ-all_orders_view
+    # שליפה מ-all_orders_view כולל delivery_time
     query = """
         SELECT 
             order_num, customer_name, phone, city, street, house_num, 
-            sku, quantity, shipping_num, order_date, message_log, order_type
+            sku, quantity, shipping_num, order_date, message_log, order_type, delivery_time
         FROM all_orders_view
     """
     df = pd.read_sql(query, conn)
@@ -112,12 +113,6 @@ def load_data():
 
     # המרה לעברית (שמות עמודות)
     df = df.rename(columns=SQL_TO_APP_COLS)
-    
-    # --- תרגום סוג הזמנה לעברית (רק לתצוגה) ---
-    df['סוג הזמנה'] = df['סוג הזמנה'].replace({
-        'Regular Order': 'הזמנה רגילה',
-        'Pre-Order (Long Delivery)': 'זמן אספקה ארוך'
-    })
     
     # מילוי ריקים
     df = df.fillna("")
@@ -129,15 +124,13 @@ def load_data():
 # -------------------------------------------
 # 📝 עדכון לוג (SQL UPDATE חכם - לפי עברית)
 # -------------------------------------------
-def update_log_in_db(order_num, sku, message, order_type_val="הזמנה רגילה"):
+def update_log_in_db(order_num, sku, message, order_type_val="Regular Order"):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # קביעת טבלת היעד לפי הטקסט בעברית
-        # אם כתוב "זמן אספקה ארוך" -> הולך ל-pre_orders
-        # אחרת -> הולך ל-orders
-        if "זמן אספקה ארוך" in str(order_type_val):
+        # זיהוי הטבלה לפי הערך המקורי מהדאטה בייס (Pre-Order vs Regular)
+        if "Pre-Order" in str(order_type_val):
             target_table = "pre_orders"
         else:
             target_table = "orders"
@@ -352,19 +345,35 @@ if search_query:
             phone_clean = normalize_phone(phone_raw)
             phone_display = "0" + phone_clean if phone_clean else ""
             
-            # --- שליפת סוג הזמנה (כבר בעברית מה-load_data) ---
-            order_type_val = str(row.get('סוג הזמנה', 'הזמנה רגילה'))
+            # --- שליפת סוג הזמנה המקורי (ללוגיקה) ---
+            order_type_raw = str(row.get('סוג הזמנה', 'Regular Order'))
             
-            # --- לוגיקה מעודכנת לסטטוס משלוח (לפי הטקסט החדש בעברית) ---
+            # --- שליפת זמן אספקה גולמי (מה-DB) ---
+            delivery_time_raw = str(row.get('raw_delivery_time', '')).strip()
+            
+            # --- לוגיקה לתצוגת "זמן אספקה" (במקום סוג הזמנה) ---
+            if "Pre-Order" in order_type_raw:
+                if delivery_time_raw and delivery_time_raw.lower() != 'none':
+                    display_delivery_text = f"עד {delivery_time_raw} ימי עסקים"
+                else:
+                    display_delivery_text = "זמן אספקה ארוך"
+            else:
+                display_delivery_text = "עד 10-14 ימי עסקים"
+
+            # --- לוגיקה לסטטוס משלוח ---
             tracking = str(row['סטטוס משלוח']).strip()
             if not tracking or tracking == "None":
-                if "זמן אספקה ארוך" in order_type_val:
-                    tracking = "" # השאר ריק אם זה זמן אספקה ארוך
+                if "Pre-Order" in order_type_raw:
+                    tracking = "" 
                 else:
-                    tracking = "התקנה" # כתוב התקנה אם זו הזמנה רגילה
+                    tracking = "התקנה"
             
             log_val = str(row.get(LOG_COLUMN_NAME, ""))
             first_name = full_name.split()[0] if full_name else ""
+            
+            # --- בניית שורת הפרטים המלאה ---
+            # כאן אנחנו משתמשים בטקסט החדש (display_delivery_text)
+            base_text_line = f"פרטי הזמנה: מספר הזמנה: {order_num}, כמות: {qty}, מק\"ט: {sku}, שם: {full_name}, כתובת: {address_display}, טלפון: {phone_display}, מספר משלוח: {tracking}, תאריך: {date_val}, זמן אספקה: {display_delivery_text}"
             
             display_rows.append({
                 "מספר הזמנה": order_num,
@@ -375,20 +384,21 @@ if search_query:
                 "כמות": qty,
                 "סטטוס משלוח": tracking,
                 "תאריך": date_val,
-                "סוג הזמנה": order_type_val,
+                "זמן אספקה": display_delivery_text, # העמודה החדשה לתצוגה
                 LOG_COLUMN_NAME: log_val,
                 "בחר": False,
                 "_excel_line": f"{order_num}\t{qty}\t{sku}\t{first_name}\t{street}\t{house}\t{city}\t{phone_display}",
-                "_text_line": f"פרטי הזמנה: מספר הזמנה: {order_num}, כמות: {qty}, מק\"ט: {sku}, שם: {full_name}, כתובת: {address_display}, טלפון: {phone_display}, מספר משלוח: {tracking}, תאריך: {date_val}, סוג: {order_type_val}",
+                "_text_line": base_text_line,
                 "_raw_phone": str(phone_raw).strip(),
                 "_order_key": order_num,
                 "_sku_key": sku,
-                "_order_type_key": order_type_val
+                "_order_type_key": order_type_raw # שומרים את המקורי עבור עדכון הדאטהבייס
             })
         
         display_df = pd.DataFrame(display_rows)
         
-        cols_order = [LOG_COLUMN_NAME, "סטטוס משלוח", "מוצר", "כמות", "סוג הזמנה", "מספר הזמנה", "בחר"]
+        # בטבלה המוצגת: "זמן אספקה" במקום "סוג הזמנה"
+        cols_order = [LOG_COLUMN_NAME, "סטטוס משלוח", "מוצר", "כמות", "זמן אספקה", "מספר הזמנה", "בחר"]
         
         edited_df = st.data_editor(
             display_df[cols_order],
@@ -397,13 +407,13 @@ if search_query:
             column_config={
                 "בחר": st.column_config.CheckboxColumn("בחר", default=False, width="small"),
                 "מספר הזמנה": st.column_config.TextColumn("מספר הזמנה", width="medium"),
-                "סוג הזמנה": st.column_config.TextColumn("סוג הזמנה", width="medium"), # הוגדל לבקשתך
+                "זמן אספקה": st.column_config.TextColumn("זמן אספקה", width="medium"), # העמודה החדשה
                 "כמות": st.column_config.TextColumn("כמות", width="small"),
                 "מוצר": st.column_config.TextColumn("מוצר", width="large"),
                 "סטטוס משלוח": st.column_config.TextColumn("מס משלוח", width="medium"),
                 LOG_COLUMN_NAME: st.column_config.TextColumn("לוג", disabled=True, width="large")
             },
-            disabled=["מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME, "סוג הזמנה"]
+            disabled=["מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME, "זמן אספקה"]
         )
 
         selected_indices = edited_df[edited_df["בחר"] == True].index
