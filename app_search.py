@@ -64,6 +64,7 @@ if not check_password():
 # ⚙️ הגדרות וחיבורים
 # ==========================================
 
+# נוספה המרה ל-order_type
 SQL_TO_APP_COLS = {
     'order_num': 'מספר הזמנה',
     'customer_name': 'שם לקוח',
@@ -75,7 +76,8 @@ SQL_TO_APP_COLS = {
     'quantity': 'כמות',
     'shipping_num': 'סטטוס משלוח',
     'order_date': 'תאריך',
-    'message_log': 'לוג מיילים'
+    'message_log': 'לוג מיילים',
+    'order_type': 'סוג הזמנה'  # חדש
 }
 
 LOG_COLUMN_NAME = "לוג מיילים"
@@ -94,16 +96,16 @@ def get_db_connection():
     )
 
 # -------------------------------------------
-# 📥 טעינת נתונים
+# 📥 טעינת נתונים (מה-VIEW החדש)
 # -------------------------------------------
 @st.cache_data
 def load_data():
     conn = get_db_connection()
-    # שולפים הכל
+    # שינוי: שליפה מ-all_orders_view במקום orders
     query = """
         SELECT 
             order_num, customer_name, phone, city, street, house_num, 
-            sku, quantity, shipping_num, order_date, message_log
+            sku, quantity, shipping_num, order_date, message_log, order_type
         FROM all_orders_view
     """
     df = pd.read_sql(query, conn)
@@ -120,18 +122,21 @@ def load_data():
     return df
 
 # -------------------------------------------
-# 📝 עדכון לוג (SQL UPDATE)
+# 📝 עדכון לוג (SQL UPDATE חכם)
 # -------------------------------------------
-def update_log_in_db(order_num, sku, message):
+def update_log_in_db(order_num, sku, message, order_type_val="Regular Order"):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         
+        # קביעת טבלת היעד לפי סוג ההזמנה
+        target_table = "pre_orders" if "Pre-Order" in str(order_type_val) else "orders"
+        
         timestamp = datetime.now().strftime("%d/%m %H:%M")
         new_entry = f"{message} ({timestamp})"
         
-        # 1. שליפת לוג קיים
-        select_sql = "SELECT message_log FROM orders WHERE order_num = %s AND sku = %s"
+        # 1. שליפת לוג קיים מהטבלה הנכונה
+        select_sql = f"SELECT message_log FROM {target_table} WHERE order_num = %s AND sku = %s"
         cursor.execute(select_sql, (str(order_num), str(sku)))
         result = cursor.fetchone()
         current_log = result[0] if result and result[0] else ""
@@ -142,8 +147,8 @@ def update_log_in_db(order_num, sku, message):
         else:
             full_log = new_entry
             
-        # 3. עדכון
-        update_sql = "UPDATE orders SET message_log = %s WHERE order_num = %s AND sku = %s"
+        # 3. עדכון בטבלה הנכונה
+        update_sql = f"UPDATE {target_table} SET message_log = %s WHERE order_num = %s AND sku = %s"
         cursor.execute(update_sql, (full_log, str(order_num), str(sku)))
         conn.commit()
         
@@ -154,7 +159,7 @@ def update_log_in_db(order_num, sku, message):
         return full_log
         
     except Exception as e:
-        st.error(f"שגיאה בעדכון מסד הנתונים: {e}")
+        st.error(f"שגיאה בעדכון מסד הנתונים ({target_table}): {e}")
         return None
 
 # --- פונקציות עזר וניקוי ---
@@ -269,12 +274,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- כותרת + כפתור רענון בשורה אחת ---
+# --- כותרת + כפתור רענון ---
 col_title, col_refresh = st.columns([6, 1])
 with col_title:
-    st.title("🔎 איתור הזמנות מהיר (SQL)")
+    st.title("🔎 איתור הזמנות מהיר (משולב)")
 with col_refresh:
-    st.markdown("<br>", unsafe_allow_html=True) # רווח קטן ליישור
+    st.markdown("<br>", unsafe_allow_html=True) 
     if st.button("🔄 רענן"):
         load_data.clear()
         st.rerun()
@@ -282,7 +287,7 @@ with col_refresh:
 try:
     with st.spinner('טוען נתונים מהענן...'):
         df = load_data()
-    st.success(f"הנתונים נטענו בהצלחה! סה\"כ {len(df)} שורות בהיסטוריה.")
+    st.success(f"הנתונים נטענו בהצלחה! סה\"כ {len(df)} שורות.")
 except Exception as e:
     st.error(f"שגיאה בטעינה: {e}")
     st.stop()
@@ -318,20 +323,16 @@ if search_query:
 
     # --- הצגת תוצאות ---
     if not filtered_df.empty:
-        # מיון: מהמוקדם למאוחר (Ascending)
         try:
             filtered_df['temp_date'] = pd.to_datetime(filtered_df['תאריך'], errors='coerce')
-            filtered_df = filtered_df.sort_values(by='temp_date', ascending=True) # <-- תיקון מיון
+            filtered_df = filtered_df.sort_values(by='temp_date', ascending=True)
         except: pass
 
         display_rows = []
         for index, row in filtered_df.iterrows():
             order_num = str(row['מספר הזמנה']).strip()
-            
-            # פורמטים מתוקנים
             qty = format_quantity(row['כמות'])
             date_val = format_date_il(row['תאריך'])
-
             sku = str(row['מוצר']).strip()
             full_name = str(row['שם לקוח']).strip()
             street = str(row['רחוב']).strip()
@@ -344,12 +345,10 @@ if search_query:
             phone_display = "0" + phone_clean if phone_clean else ""
             
             tracking = str(row['סטטוס משלוח']).strip()
-            # תיקון לוגיקה: אם אין מספר משלוח -> התקנה
-            if not tracking or tracking == "None": 
-                tracking = "התקנה"
+            if not tracking or tracking == "None": tracking = "התקנה"
             
-            first_name = full_name.split()[0] if full_name else ""
             log_val = str(row.get(LOG_COLUMN_NAME, ""))
+            order_type_val = str(row.get('סוג הזמנה', 'Regular Order')) # קריאת סוג ההזמנה
             
             display_rows.append({
                 "מספר הזמנה": order_num,
@@ -360,18 +359,21 @@ if search_query:
                 "כמות": qty,
                 "סטטוס משלוח": tracking,
                 "תאריך": date_val,
+                "סוג הזמנה": order_type_val, # הוספנו לתצוגה
                 LOG_COLUMN_NAME: log_val,
                 "בחר": False,
                 "_excel_line": f"{order_num}\t{qty}\t{sku}\t{first_name}\t{street}\t{house}\t{city}\t{phone_display}",
-                "_text_line": f"פרטי הזמנה: מספר הזמנה: {order_num}, כמות: {qty}, מק\"ט: {sku}, שם: {full_name}, כתובת: {address_display}, טלפון: {phone_display}, מספר משלוח: {tracking}, תאריך: {date_val}",
+                "_text_line": f"פרטי הזמנה: מספר הזמנה: {order_num}, כמות: {qty}, מק\"ט: {sku}, שם: {full_name}, כתובת: {address_display}, טלפון: {phone_display}, מספר משלוח: {tracking}, תאריך: {date_val}, סוג: {order_type_val}",
                 "_raw_phone": str(phone_raw).strip(),
                 "_order_key": order_num,
-                "_sku_key": sku
+                "_sku_key": sku,
+                "_order_type_key": order_type_val # נתון נסתר לעדכון הדאטהבייס
             })
         
         display_df = pd.DataFrame(display_rows)
         
-        cols_order = [LOG_COLUMN_NAME, "סטטוס משלוח", "מוצר", "כמות", "מספר הזמנה", "בחר"]
+        # הוספנו את "סוג הזמנה" לטבלה המוצגת
+        cols_order = [LOG_COLUMN_NAME, "סטטוס משלוח", "מוצר", "כמות", "סוג הזמנה", "מספר הזמנה", "בחר"]
         
         edited_df = st.data_editor(
             display_df[cols_order],
@@ -380,12 +382,13 @@ if search_query:
             column_config={
                 "בחר": st.column_config.CheckboxColumn("בחר", default=False, width="small"),
                 "מספר הזמנה": st.column_config.TextColumn("מספר הזמנה", width="medium"),
+                "סוג הזמנה": st.column_config.TextColumn("סוג הזמנה", width="small"),
                 "כמות": st.column_config.TextColumn("כמות", width="small"),
                 "מוצר": st.column_config.TextColumn("מוצר", width="large"),
                 "סטטוס משלוח": st.column_config.TextColumn("מס משלוח", width="medium"),
                 LOG_COLUMN_NAME: st.column_config.TextColumn("לוג", disabled=True, width="large")
             },
-            disabled=["מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME]
+            disabled=["מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME, "סוג הזמנה"]
         )
 
         selected_indices = edited_df[edited_df["בחר"] == True].index
@@ -393,7 +396,7 @@ if search_query:
         is_implicit_select_all = selected_indices.empty
         show_bulk_warning = (is_implicit_select_all and len(rows_for_action) > 10)
 
-        # --- כפתורים (בדיוק לפי הלוגיקה המקורית) ---
+        # --- כפתורים ---
         col_wa_policy, col_wa_contact, col_wa_install, col_mail_status, col_mail_return, col_mail_supplier = st.columns(6, gap="small")
         
         # 1. מדיניות
@@ -402,14 +405,12 @@ if search_query:
                 if rows_for_action.empty: st.toast("⚠️ אין נתונים")
                 else:
                     count = 0
-                    # שימור לוגיקה: קיבוץ לפי טלפון
                     for phone, group in rows_for_action.groupby('_raw_phone'):
                         if not phone: continue
                         orders_str = ", ".join(group['מספר הזמנה'].unique())
                         skus_str = ", ".join(group['מוצר'].unique())
                         client_name = group.iloc[0]['שם לקוח'].split()[0] if group.iloc[0]['שם לקוח'] else "לקוח"
                         
-                        # הטקסט המקורי בדיוק
                         msg_body = f"""שלום {client_name},
 מדברים לגבי הזמנה/ות: {orders_str}.
 מוצרים: {skus_str}.
@@ -426,7 +427,8 @@ if search_query:
                         if send_whatsapp_message(phone, msg_body):
                             count += 1
                             for _, r in group.iterrows():
-                                update_log_in_db(r['_order_key'], r['_sku_key'], "💬 נשלח ווצאפ מדיניות")
+                                # מעבירים את סוג ההזמנה לעדכון
+                                update_log_in_db(r['_order_key'], r['_sku_key'], "💬 נשלח ווצאפ מדיניות", r['_order_type_key'])
                             st.toast(f"נשלח ל-{client_name} ✅")
                     if count > 0:
                         time.sleep(1)
@@ -445,7 +447,6 @@ if search_query:
                         tracking_str = ", ".join(group['סטטוס משלוח'].unique())
                         client_name = group.iloc[0]['שם לקוח'].split()[0]
                         
-                        # הטקסט המקורי בדיוק
                         msg_body = f"""היי {client_name},
 חוזרים אלייך מסלימפרייס לגבי הזמנה/ות: {orders_str}
 מוצרים: {skus_str}
@@ -455,7 +456,7 @@ if search_query:
                         if send_whatsapp_message(phone, msg_body):
                             count += 1
                             for _, r in group.iterrows():
-                                update_log_in_db(r['_order_key'], r['_sku_key'], "💬 נשלח 'חזרנו אליך'")
+                                update_log_in_db(r['_order_key'], r['_sku_key'], "💬 נשלח 'חזרנו אליך'", r['_order_type_key'])
                             st.toast(f"נשלח ל-{client_name} ✅")
                     if count > 0:
                         time.sleep(1)
@@ -467,7 +468,6 @@ if search_query:
                 if rows_for_action.empty: st.toast("⚠️ אין נתונים")
                 else:
                     all_msgs = []
-                    # שימור לוגיקה: קיבוץ לפי הזמנה
                     for order_num, group in rows_for_action.groupby('מספר הזמנה'):
                         r = group.iloc[0]
                         items = ", ".join([f"{row['כמות']} X {row['מוצר']}" for _, row in group.iterrows()])
@@ -477,7 +477,7 @@ if search_query:
                     if send_whatsapp_message(INSTALLATION_PHONE, "\n\n".join(all_msgs)):
                         st.toast("נשלח למתקין ✅")
                         for _, r in rows_for_action.iterrows():
-                             update_log_in_db(r['_order_key'], r['_sku_key'], "💬 נשלח למתקין")
+                             update_log_in_db(r['_order_key'], r['_sku_key'], "💬 נשלח למתקין", r['_order_type_key'])
                         time.sleep(1)
                         st.rerun()
 
@@ -486,7 +486,6 @@ if search_query:
             if not show_bulk_warning and st.button("❓ מה קורה?"):
                 tn_list = [t for t in rows_for_action['סטטוס משלוח'].unique() if t and t != "התקנה"]
                 
-                # בדיקת כפילויות בלוג (כמו במקור)
                 duplicate_alert = False
                 for _, r in rows_for_action.iterrows():
                      if "נשלח בדיקה" in str(r[LOG_COLUMN_NAME]): duplicate_alert = True
@@ -504,7 +503,7 @@ if search_query:
                         st.success(f"נשלח: {subj}")
                         for _, r in rows_for_action.iterrows():
                             if r['סטטוס משלוח'] in tn_list:
-                                update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח בדיקה")
+                                update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח בדיקה", r['_order_type_key'])
                         time.sleep(1)
                         st.rerun()
 
@@ -523,7 +522,6 @@ if search_query:
         # 6. ספקים (PO / 9)
         with col_mail_supplier:
             if not show_bulk_warning and st.button("📞 אין מענה"):
-                # סינון לפי לוגיקה מקורית
                 ace_g = rows_for_action[rows_for_action['מספר הזמנה'].astype(str).str.upper().str.startswith("PO")]
                 pay_g = rows_for_action[rows_for_action['מספר הזמנה'].astype(str).str.startswith("9")]
                 
@@ -541,7 +539,7 @@ if search_query:
                     
                     if send_custom_email(subj, body, EMAIL_ACE):
                         st.toast("נשלח לאייס")
-                        for _, r in ace_g.iterrows(): update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח ספק (אין מענה)")
+                        for _, r in ace_g.iterrows(): update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח ספק (אין מענה)", r['_order_type_key'])
 
                 # Payngo
                 if not pay_g.empty and EMAIL_PAYNGO:
@@ -555,7 +553,7 @@ if search_query:
 
                     if send_custom_email(subj, body, EMAIL_PAYNGO):
                         st.toast("נשלח למחסני חשמל")
-                        for _, r in pay_g.iterrows(): update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח ספק (אין מענה)")
+                        for _, r in pay_g.iterrows(): update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח ספק (אין מענה)", r['_order_type_key'])
                 
                 if not found_supplier: st.toast("⚠️ לא זוהו הזמנות ספקים תואמות")
                 else: 
@@ -571,5 +569,3 @@ if search_query:
             
     else:
         st.warning(f"לא נמצאו תוצאות עבור: {clean_text_query}")
-
-
