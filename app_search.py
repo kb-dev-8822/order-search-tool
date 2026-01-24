@@ -104,7 +104,7 @@ def load_data():
         SELECT 
             order_num, customer_name, phone, city, street, house_num, 
             sku, quantity, shipping_num, order_date, message_log
-        FROM orders
+        FROM all_orders_view
     """
     df = pd.read_sql(query, conn)
     conn.close()
@@ -571,4 +571,5 @@ if search_query:
             
     else:
         st.warning(f"לא נמצאו תוצאות עבור: {clean_text_query}")
+
 
