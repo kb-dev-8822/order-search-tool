@@ -341,13 +341,18 @@ if search_query:
             phone_clean = normalize_phone(phone_raw)
             phone_display = "0" + phone_clean if phone_clean else ""
             
-            tracking = str(row['סטטוס משלוח']).strip()
-            if not tracking or tracking == "None": tracking = "התקנה"
-            
-            log_val = str(row.get(LOG_COLUMN_NAME, ""))
+            # --- שליפת סוג הזמנה ---
             order_type_val = str(row.get('סוג הזמנה', 'Regular Order'))
             
-            # --- התיקון כאן: הוספת הגדרת השם הפרטי ---
+            # --- לוגיקה מעודכנת לסטטוס משלוח ---
+            tracking = str(row['סטטוס משלוח']).strip()
+            if not tracking or tracking == "None":
+                if "Pre-Order" in order_type_val:
+                    tracking = "" # השאר ריק אם זה הזמנה מוקדמת
+                else:
+                    tracking = "התקנה" # כתוב התקנה אם זה הזמנה רגילה
+            
+            log_val = str(row.get(LOG_COLUMN_NAME, ""))
             first_name = full_name.split()[0] if full_name else ""
             
             display_rows.append({
@@ -381,7 +386,7 @@ if search_query:
             column_config={
                 "בחר": st.column_config.CheckboxColumn("בחר", default=False, width="small"),
                 "מספר הזמנה": st.column_config.TextColumn("מספר הזמנה", width="medium"),
-                "סוג הזמנה": st.column_config.TextColumn("סוג הזמנה", width="small"),
+                "סוג הזמנה": st.column_config.TextColumn("סוג הזמנה", width="medium"), # כאן שונה ל-medium
                 "כמות": st.column_config.TextColumn("כמות", width="small"),
                 "מוצר": st.column_config.TextColumn("מוצר", width="large"),
                 "סטטוס משלוח": st.column_config.TextColumn("מס משלוח", width="medium"),
