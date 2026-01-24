@@ -64,7 +64,6 @@ if not check_password():
 # ⚙️ הגדרות וחיבורים
 # ==========================================
 
-# נוספה המרה ל-order_type
 SQL_TO_APP_COLS = {
     'order_num': 'מספר הזמנה',
     'customer_name': 'שם לקוח',
@@ -77,7 +76,7 @@ SQL_TO_APP_COLS = {
     'shipping_num': 'סטטוס משלוח',
     'order_date': 'תאריך',
     'message_log': 'לוג מיילים',
-    'order_type': 'סוג הזמנה'  # חדש
+    'order_type': 'סוג הזמנה'
 }
 
 LOG_COLUMN_NAME = "לוג מיילים"
@@ -101,7 +100,7 @@ def get_db_connection():
 @st.cache_data
 def load_data():
     conn = get_db_connection()
-    # שינוי: שליפה מ-all_orders_view במקום orders
+    # שליפה מ-all_orders_view
     query = """
         SELECT 
             order_num, customer_name, phone, city, street, house_num, 
@@ -155,7 +154,7 @@ def update_log_in_db(order_num, sku, message, order_type_val="Regular Order"):
         cursor.close()
         conn.close()
         
-        load_data.clear() # ניקוי מטמון כדי לראות את השינוי
+        load_data.clear() # ניקוי מטמון
         return full_log
         
     except Exception as e:
@@ -189,7 +188,6 @@ def clean_input_garbage(val):
     return cleaned_val.strip()
 
 def format_date_il(d):
-    """ממיר תאריך SQL (YYYY-MM-DD) לפורמט ישראלי"""
     if not d: return ""
     try:
         dt = pd.to_datetime(d)
@@ -198,7 +196,6 @@ def format_date_il(d):
         return str(d)
 
 def format_quantity(q):
-    """מנקה אפסים אחרי הנקודה (1.0 -> 1)"""
     try:
         return str(int(float(q)))
     except:
@@ -274,7 +271,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- כותרת + כפתור רענון ---
+# --- כותרת ---
 col_title, col_refresh = st.columns([6, 1])
 with col_title:
     st.title("🔎 איתור הזמנות מהיר (משולב)")
@@ -311,7 +308,7 @@ if search_query:
         mask_tracking = df['סטטוס משלוח'].astype(str).str.contains(clean_text_query, case=False, na=False, regex=False)
         conditions.append(mask_tracking)
 
-    # 3. חיפוש טלפון (נרמול)
+    # 3. חיפוש טלפון
     if clean_phone_query and 'טלפון' in df.columns:
         phone_col_norm = df['טלפון'].astype(str).apply(normalize_phone)
         mask_phone = phone_col_norm == clean_phone_query
@@ -348,7 +345,10 @@ if search_query:
             if not tracking or tracking == "None": tracking = "התקנה"
             
             log_val = str(row.get(LOG_COLUMN_NAME, ""))
-            order_type_val = str(row.get('סוג הזמנה', 'Regular Order')) # קריאת סוג ההזמנה
+            order_type_val = str(row.get('סוג הזמנה', 'Regular Order'))
+            
+            # --- התיקון כאן: הוספת הגדרת השם הפרטי ---
+            first_name = full_name.split()[0] if full_name else ""
             
             display_rows.append({
                 "מספר הזמנה": order_num,
@@ -359,7 +359,7 @@ if search_query:
                 "כמות": qty,
                 "סטטוס משלוח": tracking,
                 "תאריך": date_val,
-                "סוג הזמנה": order_type_val, # הוספנו לתצוגה
+                "סוג הזמנה": order_type_val,
                 LOG_COLUMN_NAME: log_val,
                 "בחר": False,
                 "_excel_line": f"{order_num}\t{qty}\t{sku}\t{first_name}\t{street}\t{house}\t{city}\t{phone_display}",
@@ -367,12 +367,11 @@ if search_query:
                 "_raw_phone": str(phone_raw).strip(),
                 "_order_key": order_num,
                 "_sku_key": sku,
-                "_order_type_key": order_type_val # נתון נסתר לעדכון הדאטהבייס
+                "_order_type_key": order_type_val
             })
         
         display_df = pd.DataFrame(display_rows)
         
-        # הוספנו את "סוג הזמנה" לטבלה המוצגת
         cols_order = [LOG_COLUMN_NAME, "סטטוס משלוח", "מוצר", "כמות", "סוג הזמנה", "מספר הזמנה", "בחר"]
         
         edited_df = st.data_editor(
@@ -427,7 +426,6 @@ if search_query:
                         if send_whatsapp_message(phone, msg_body):
                             count += 1
                             for _, r in group.iterrows():
-                                # מעבירים את סוג ההזמנה לעדכון
                                 update_log_in_db(r['_order_key'], r['_sku_key'], "💬 נשלח ווצאפ מדיניות", r['_order_type_key'])
                             st.toast(f"נשלח ל-{client_name} ✅")
                     if count > 0:
