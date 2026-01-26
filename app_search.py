@@ -78,7 +78,7 @@ SQL_TO_APP_COLS = {
     'message_log': 'לוג מיילים',
     'order_type': 'סוג הזמנה',
     'delivery_time': 'raw_delivery_time', # שם זמני רק לשליפה
-    'notes': 'הערות' # <--- הוספנו את זה
+    'notes': 'הערות' 
 }
 
 LOG_COLUMN_NAME = "לוג מיילים"
@@ -131,7 +131,6 @@ def update_log_in_db(order_num, sku, message, order_type_val="Regular Order"):
         cursor = conn.cursor()
         
         # זיהוי הטבלה לפי הערך המקורי מהדאטה בייס
-        # כאן הוספנו תמיכה גם בטבלאות החדשות אם נצטרך בעתיד, כרגע נשאר פשוט
         if "Pre-Order" in str(order_type_val):
             target_table = "pre_orders"
         elif "Pickup" in str(order_type_val):
@@ -144,14 +143,11 @@ def update_log_in_db(order_num, sku, message, order_type_val="Regular Order"):
         timestamp = datetime.now().strftime("%d/%m %H:%M")
         new_entry = f"{message} ({timestamp})"
         
-        # 1. שליפת לוג קיים מהטבלה הנכונה
+        # 1. שליפת לוג קיים
         select_sql = f"SELECT message_log FROM {target_table} WHERE order_num = %s AND sku = %s"
-        # הערה: ייתכן שבטבלאות החדשות אין message_log עדיין, אבל הוספנו ב-View וירטואלית.
-        # אם בטבלה הפיזית אין עמודה, זה ייכשל. לכן כרגע נשאיר עדכון לוג רק להזמנות קיימות/PRE
-        # או שנוודא שהוספת עמודת message_log לטבלאות החדשות ב-SQL
         
-        # לצורך בטיחות, אם זה טבלאות חדשות ואין עמודה, נדלג על השמירה כרגע כדי לא להקריס
-        # (אלא אם הוספת message_log לטבלאות החדשות בסופו של דבר - אני מניח שכן ב-View אבל לא בטוח בפיזית)
+        # הערה: וודא שהרצת את פקודת ה-ALTER TABLE ב-Supabase להוספת עמודת message_log לטבלאות החדשות
+        # אחרת הפעולה הזו תיכשל עבור איסופים/חלקי חילוף
         
         cursor.execute(select_sql, (str(order_num), str(sku)))
         result = cursor.fetchone()
@@ -175,8 +171,6 @@ def update_log_in_db(order_num, sku, message, order_type_val="Regular Order"):
         return full_log
         
     except Exception as e:
-        # st.error(f"שגיאה בעדכון מסד הנתונים ({target_table}): {e}")
-        # לא מציגים שגיאה למשתמש כדי לא להפריע לזרימה במקרה של טבלאות חדשות
         return None
 
 # --- פונקציות עזר וניקוי ---
@@ -369,45 +363,44 @@ if search_query:
             delivery_time_raw = str(row.get('raw_delivery_time', '')).strip()
             
             # ==================================================
-            # 🚀 הלוגיקה החדשה והחכמה לסטטוס וזמן אספקה
+            # 🚀 לוגיקת זמן אספקה
             # ==================================================
             
-            # 1. איסוף עצמי (חדש)
             if "Pickup" in order_type_raw:
-                display_delivery_text = "" # בלי זמן אספקה
-                # אפשר להוסיף חיווי שזה איסוף עצמי בתוך שם המוצר או בעמודה נפרדת אם תרצה
-                # כרגע נשאיר את זה כ"ריק" בזמן אספקה כבקשתך
-                # אבל נעדכן את ההערות אם יש
+                display_delivery_text = "" 
             
-            # 2. חלק חילוף (חדש)
             elif "Spare Part" in order_type_raw:
                 display_delivery_text = "עד 10 ימי עסקים"
             
-            # 3. הזמנה מוקדמת
             elif "Pre-Order" in order_type_raw:
                 if delivery_time_raw and delivery_time_raw.lower() != 'none':
                     display_delivery_text = f"עד {delivery_time_raw} ימי עסקים"
                 else:
                     display_delivery_text = "זמן אספקה ארוך"
-            
-            # 4. הזמנה רגילה
             else:
                 display_delivery_text = "עד 10-14 ימי עסקים"
 
             # ==================================================
-
-            # --- לוגיקה לסטטוס משלוח ---
+            # 🚚 לוגיקת סטטוס משלוח - התיקונים שלך כאן
+            # ==================================================
+            
             tracking = str(row['סטטוס משלוח']).strip()
+            
+            # 1. לוגיקה בסיסית: אם ריק, ברירת המחדל היא "התקנה", אלא אם זה סוג מיוחד
             if not tracking or tracking == "None":
-                # אם זה איסוף או חלקי חילוף או הזמנה מוקדמת - לא מציגים "התקנה"
                 if any(x in order_type_raw for x in ["Pre-Order", "Pickup", "Spare Part"]):
                     tracking = "" 
                 else:
                     tracking = "התקנה"
             
-            # הוספת "איסוף עצמי" בסטטוס משלוח אם זה איסוף (אופציונלי, לשיקולך, כרגע זה ריק)
+            # 2. דריסת הטקסט לפי סוג הזמנה (הבקשות החדשות שלך)
             if "Pickup" in order_type_raw:
-                tracking = "איסוף עצמי" # שינוי קטן שיהיה ברור
+                tracking = "איסוף"  # שינינו מ"איסוף עצמי" ל"איסוף"
+            
+            elif "Spare Part" in order_type_raw:
+                tracking = "חלקי חילוף"  # כיתוב קבוע בטור מס' משלוח
+
+            # ==================================================
 
             log_val = str(row.get(LOG_COLUMN_NAME, ""))
             first_name = full_name.split()[0] if full_name else ""
@@ -427,7 +420,7 @@ if search_query:
                 "סטטוס משלוח": tracking,
                 "תאריך": date_val,
                 "זמן אספקה": display_delivery_text,
-                "הערות": notes_val, # <--- העמודה החדשה
+                "הערות": notes_val,
                 LOG_COLUMN_NAME: log_val,
                 "בחר": False,
                 "_excel_line": f"{order_num}\t{qty}\t{sku}\t{first_name}\t{street}\t{house}\t{city}\t{phone_display}",
@@ -451,7 +444,7 @@ if search_query:
                 "בחר": st.column_config.CheckboxColumn("בחר", default=False, width="small"),
                 "מספר הזמנה": st.column_config.TextColumn("מספר הזמנה", width="medium"),
                 "זמן אספקה": st.column_config.TextColumn("זמן אספקה", width="medium"),
-                "הערות": st.column_config.TextColumn("הערות", width="medium"), # <--- חדש
+                "הערות": st.column_config.TextColumn("הערות", width="medium"),
                 "כמות": st.column_config.TextColumn("כמות", width="small"),
                 "מוצר": st.column_config.TextColumn("מוצר", width="large"),
                 "סטטוס משלוח": st.column_config.TextColumn("מס משלוח", width="medium"),
@@ -465,7 +458,7 @@ if search_query:
         is_implicit_select_all = selected_indices.empty
         show_bulk_warning = (is_implicit_select_all and len(rows_for_action) > 10)
 
-        # --- כפתורים (בדיוק כמו שהיו) ---
+        # --- כפתורים ---
         col_wa_policy, col_wa_contact, col_wa_install, col_mail_status, col_mail_return, col_mail_supplier = st.columns(6, gap="small")
         
         # 1. מדיניות
@@ -552,7 +545,7 @@ if search_query:
         # 4. מייל סטטוס
         with col_mail_status:
             if not show_bulk_warning and st.button("❓ מה קורה?"):
-                tn_list = [t for t in rows_for_action['סטטוס משלוח'].unique() if t and t != "התקנה" and t != "איסוף עצמי"]
+                tn_list = [t for t in rows_for_action['סטטוס משלוח'].unique() if t and t != "התקנה" and t != "איסוף" and t != "חלקי חילוף"]
                 
                 duplicate_alert = False
                 for _, r in rows_for_action.iterrows():
@@ -578,7 +571,7 @@ if search_query:
         # 5. מייל החזרה
         with col_mail_return:
             if not show_bulk_warning and st.button("↩️ להחזיר"):
-                tn_list = [t for t in rows_for_action['סטטוס משלוח'].unique() if t and t != "התקנה" and t != "איסוף עצמי"]
+                tn_list = [t for t in rows_for_action['סטטוס משלוח'].unique() if t and t != "התקנה" and t != "איסוף" and t != "חלקי חילוף"]
                 if not tn_list: st.toast("⚠️ אין מספרי משלוח")
                 else:
                     tn_list = list(set(tn_list))
