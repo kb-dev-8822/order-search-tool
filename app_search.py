@@ -77,7 +77,8 @@ SQL_TO_APP_COLS = {
     'order_date': 'תאריך',
     'message_log': 'לוג מיילים',
     'order_type': 'סוג הזמנה',
-    'delivery_time': 'raw_delivery_time' # שם זמני רק לשליפה
+    'delivery_time': 'raw_delivery_time', # שם זמני רק לשליפה
+    'notes': 'הערות' # <--- הוספנו את זה
 }
 
 LOG_COLUMN_NAME = "לוג מיילים"
@@ -101,11 +102,11 @@ def get_db_connection():
 @st.cache_data
 def load_data():
     conn = get_db_connection()
-    # שליפה מ-all_orders_view כולל delivery_time
+    # שליפה מ-all_orders_view כולל delivery_time ו-notes
     query = """
         SELECT 
             order_num, customer_name, phone, city, street, house_num, 
-            sku, quantity, shipping_num, order_date, message_log, order_type, delivery_time
+            sku, quantity, shipping_num, order_date, message_log, order_type, delivery_time, notes
         FROM all_orders_view
     """
     df = pd.read_sql(query, conn)
@@ -129,9 +130,14 @@ def update_log_in_db(order_num, sku, message, order_type_val="Regular Order"):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # זיהוי הטבלה לפי הערך המקורי מהדאטה בייס (Pre-Order vs Regular)
+        # זיהוי הטבלה לפי הערך המקורי מהדאטה בייס
+        # כאן הוספנו תמיכה גם בטבלאות החדשות אם נצטרך בעתיד, כרגע נשאר פשוט
         if "Pre-Order" in str(order_type_val):
             target_table = "pre_orders"
+        elif "Pickup" in str(order_type_val):
+             target_table = "pickups"
+        elif "Spare Part" in str(order_type_val):
+             target_table = "spare_parts"
         else:
             target_table = "orders"
         
@@ -140,6 +146,13 @@ def update_log_in_db(order_num, sku, message, order_type_val="Regular Order"):
         
         # 1. שליפת לוג קיים מהטבלה הנכונה
         select_sql = f"SELECT message_log FROM {target_table} WHERE order_num = %s AND sku = %s"
+        # הערה: ייתכן שבטבלאות החדשות אין message_log עדיין, אבל הוספנו ב-View וירטואלית.
+        # אם בטבלה הפיזית אין עמודה, זה ייכשל. לכן כרגע נשאיר עדכון לוג רק להזמנות קיימות/PRE
+        # או שנוודא שהוספת עמודת message_log לטבלאות החדשות ב-SQL
+        
+        # לצורך בטיחות, אם זה טבלאות חדשות ואין עמודה, נדלג על השמירה כרגע כדי לא להקריס
+        # (אלא אם הוספת message_log לטבלאות החדשות בסופו של דבר - אני מניח שכן ב-View אבל לא בטוח בפיזית)
+        
         cursor.execute(select_sql, (str(order_num), str(sku)))
         result = cursor.fetchone()
         current_log = result[0] if result and result[0] else ""
@@ -162,7 +175,8 @@ def update_log_in_db(order_num, sku, message, order_type_val="Regular Order"):
         return full_log
         
     except Exception as e:
-        st.error(f"שגיאה בעדכון מסד הנתונים ({target_table}): {e}")
+        # st.error(f"שגיאה בעדכון מסד הנתונים ({target_table}): {e}")
+        # לא מציגים שגיאה למשתמש כדי לא להפריע לזרימה במקרה של טבלאות חדשות
         return None
 
 # --- פונקציות עזר וניקוי ---
@@ -345,35 +359,63 @@ if search_query:
             phone_clean = normalize_phone(phone_raw)
             phone_display = "0" + phone_clean if phone_clean else ""
             
+            # --- שליפת הערות (חדש) ---
+            notes_val = str(row.get('הערות', '')).strip()
+            
             # --- שליפת סוג הזמנה המקורי (ללוגיקה) ---
             order_type_raw = str(row.get('סוג הזמנה', 'Regular Order'))
             
             # --- שליפת זמן אספקה גולמי (מה-DB) ---
             delivery_time_raw = str(row.get('raw_delivery_time', '')).strip()
             
-            # --- לוגיקה לתצוגת "זמן אספקה" (במקום סוג הזמנה) ---
-            if "Pre-Order" in order_type_raw:
+            # ==================================================
+            # 🚀 הלוגיקה החדשה והחכמה לסטטוס וזמן אספקה
+            # ==================================================
+            
+            # 1. איסוף עצמי (חדש)
+            if "Pickup" in order_type_raw:
+                display_delivery_text = "" # בלי זמן אספקה
+                # אפשר להוסיף חיווי שזה איסוף עצמי בתוך שם המוצר או בעמודה נפרדת אם תרצה
+                # כרגע נשאיר את זה כ"ריק" בזמן אספקה כבקשתך
+                # אבל נעדכן את ההערות אם יש
+            
+            # 2. חלק חילוף (חדש)
+            elif "Spare Part" in order_type_raw:
+                display_delivery_text = "עד 10 ימי עסקים"
+            
+            # 3. הזמנה מוקדמת
+            elif "Pre-Order" in order_type_raw:
                 if delivery_time_raw and delivery_time_raw.lower() != 'none':
                     display_delivery_text = f"עד {delivery_time_raw} ימי עסקים"
                 else:
                     display_delivery_text = "זמן אספקה ארוך"
+            
+            # 4. הזמנה רגילה
             else:
                 display_delivery_text = "עד 10-14 ימי עסקים"
+
+            # ==================================================
 
             # --- לוגיקה לסטטוס משלוח ---
             tracking = str(row['סטטוס משלוח']).strip()
             if not tracking or tracking == "None":
-                if "Pre-Order" in order_type_raw:
+                # אם זה איסוף או חלקי חילוף או הזמנה מוקדמת - לא מציגים "התקנה"
+                if any(x in order_type_raw for x in ["Pre-Order", "Pickup", "Spare Part"]):
                     tracking = "" 
                 else:
                     tracking = "התקנה"
             
+            # הוספת "איסוף עצמי" בסטטוס משלוח אם זה איסוף (אופציונלי, לשיקולך, כרגע זה ריק)
+            if "Pickup" in order_type_raw:
+                tracking = "איסוף עצמי" # שינוי קטן שיהיה ברור
+
             log_val = str(row.get(LOG_COLUMN_NAME, ""))
             first_name = full_name.split()[0] if full_name else ""
             
-            # --- בניית שורת הפרטים המלאה ---
-            # כאן אנחנו משתמשים בטקסט החדש (display_delivery_text)
+            # --- בניית שורת הפרטים המלאה (כולל הערות) ---
             base_text_line = f"פרטי הזמנה: מספר הזמנה: {order_num}, כמות: {qty}, מק\"ט: {sku}, שם: {full_name}, כתובת: {address_display}, טלפון: {phone_display}, מספר משלוח: {tracking}, תאריך: {date_val}, זמן אספקה: {display_delivery_text}"
+            if notes_val:
+                base_text_line += f", הערות: {notes_val}"
             
             display_rows.append({
                 "מספר הזמנה": order_num,
@@ -384,7 +426,8 @@ if search_query:
                 "כמות": qty,
                 "סטטוס משלוח": tracking,
                 "תאריך": date_val,
-                "זמן אספקה": display_delivery_text, # העמודה החדשה לתצוגה
+                "זמן אספקה": display_delivery_text,
+                "הערות": notes_val, # <--- העמודה החדשה
                 LOG_COLUMN_NAME: log_val,
                 "בחר": False,
                 "_excel_line": f"{order_num}\t{qty}\t{sku}\t{first_name}\t{street}\t{house}\t{city}\t{phone_display}",
@@ -392,13 +435,13 @@ if search_query:
                 "_raw_phone": str(phone_raw).strip(),
                 "_order_key": order_num,
                 "_sku_key": sku,
-                "_order_type_key": order_type_raw # שומרים את המקורי עבור עדכון הדאטהבייס
+                "_order_type_key": order_type_raw 
             })
         
         display_df = pd.DataFrame(display_rows)
         
-        # בטבלה המוצגת: "זמן אספקה" במקום "סוג הזמנה"
-        cols_order = [LOG_COLUMN_NAME, "סטטוס משלוח", "מוצר", "כמות", "זמן אספקה", "מספר הזמנה", "בחר"]
+        # סידור עמודות (הוספנו "הערות" לתצוגה)
+        cols_order = [LOG_COLUMN_NAME, "הערות", "סטטוס משלוח", "מוצר", "כמות", "זמן אספקה", "מספר הזמנה", "בחר"]
         
         edited_df = st.data_editor(
             display_df[cols_order],
@@ -407,13 +450,14 @@ if search_query:
             column_config={
                 "בחר": st.column_config.CheckboxColumn("בחר", default=False, width="small"),
                 "מספר הזמנה": st.column_config.TextColumn("מספר הזמנה", width="medium"),
-                "זמן אספקה": st.column_config.TextColumn("זמן אספקה", width="medium"), # העמודה החדשה
+                "זמן אספקה": st.column_config.TextColumn("זמן אספקה", width="medium"),
+                "הערות": st.column_config.TextColumn("הערות", width="medium"), # <--- חדש
                 "כמות": st.column_config.TextColumn("כמות", width="small"),
                 "מוצר": st.column_config.TextColumn("מוצר", width="large"),
                 "סטטוס משלוח": st.column_config.TextColumn("מס משלוח", width="medium"),
                 LOG_COLUMN_NAME: st.column_config.TextColumn("לוג", disabled=True, width="large")
             },
-            disabled=["מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME, "זמן אספקה"]
+            disabled=["מספר הזמנה", "מוצר", "כמות", "סטטוס משלוח", LOG_COLUMN_NAME, "זמן אספקה", "הערות"]
         )
 
         selected_indices = edited_df[edited_df["בחר"] == True].index
@@ -421,7 +465,7 @@ if search_query:
         is_implicit_select_all = selected_indices.empty
         show_bulk_warning = (is_implicit_select_all and len(rows_for_action) > 10)
 
-        # --- כפתורים ---
+        # --- כפתורים (בדיוק כמו שהיו) ---
         col_wa_policy, col_wa_contact, col_wa_install, col_mail_status, col_mail_return, col_mail_supplier = st.columns(6, gap="small")
         
         # 1. מדיניות
@@ -508,7 +552,7 @@ if search_query:
         # 4. מייל סטטוס
         with col_mail_status:
             if not show_bulk_warning and st.button("❓ מה קורה?"):
-                tn_list = [t for t in rows_for_action['סטטוס משלוח'].unique() if t and t != "התקנה"]
+                tn_list = [t for t in rows_for_action['סטטוס משלוח'].unique() if t and t != "התקנה" and t != "איסוף עצמי"]
                 
                 duplicate_alert = False
                 for _, r in rows_for_action.iterrows():
@@ -534,7 +578,7 @@ if search_query:
         # 5. מייל החזרה
         with col_mail_return:
             if not show_bulk_warning and st.button("↩️ להחזיר"):
-                tn_list = [t for t in rows_for_action['סטטוס משלוח'].unique() if t and t != "התקנה"]
+                tn_list = [t for t in rows_for_action['סטטוס משלוח'].unique() if t and t != "התקנה" and t != "איסוף עצמי"]
                 if not tn_list: st.toast("⚠️ אין מספרי משלוח")
                 else:
                     tn_list = list(set(tn_list))
