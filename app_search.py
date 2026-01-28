@@ -142,13 +142,14 @@ def load_data():
     return df
 
 # -------------------------------------------
-# 📝 עדכון לוג
+# 📝 עדכון לוג (SQL UPDATE חכם - תומך גם ב-ID)
 # -------------------------------------------
-def update_log_in_db(order_num, sku, message, order_type_val="Regular Order"):
+def update_log_in_db(order_num, sku, message, order_type_val="Regular Order", row_id=None):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         
+        # זיהוי הטבלה
         if "Pre-Order" in str(order_type_val):
             target_table = "pre_orders"
         elif "Pickup" in str(order_type_val):
@@ -161,24 +162,45 @@ def update_log_in_db(order_num, sku, message, order_type_val="Regular Order"):
         timestamp = datetime.now().strftime("%d/%m %H:%M")
         new_entry = f"{message} ({timestamp})"
         
-        select_sql = f"SELECT message_log FROM {target_table} WHERE order_num = %s AND sku = %s"
-        cursor.execute(select_sql, (str(order_num), str(sku)))
+        # בניית תנאי השליפה והעדכון (WHERE)
+        # אם יש ID - נשתמש בו כי הוא הכי מדויק
+        if row_id:
+            condition_sql = "WHERE id = %s"
+            params_select = (row_id,)
+            params_update = (full_log_placeholder, row_id) # נבנה את זה בהמשך
+        else:
+            # אחרת, נעבוד בשיטה הישנה (לפי הזמנה ומוצר)
+            condition_sql = "WHERE order_num = %s AND sku = %s"
+            params_select = (str(order_num), str(sku))
+        
+        # 1. שליפת לוג קיים
+        select_sql = f"SELECT message_log FROM {target_table} {condition_sql}"
+        cursor.execute(select_sql, params_select)
         result = cursor.fetchone()
         current_log = result[0] if result and result[0] else ""
         
+        # 2. שרשור
         if current_log:
             full_log = f"{current_log} | {new_entry}"
         else:
             full_log = new_entry
             
-        update_sql = f"UPDATE {target_table} SET message_log = %s WHERE order_num = %s AND sku = %s"
-        cursor.execute(update_sql, (full_log, str(order_num), str(sku)))
+        # 3. עדכון בטבלה הנכונה
+        update_sql = f"UPDATE {target_table} SET message_log = %s {condition_sql}"
+        
+        if row_id:
+            cursor.execute(update_sql, (full_log, row_id))
+        else:
+            cursor.execute(update_sql, (full_log, str(order_num), str(sku)))
+            
         conn.commit()
         
         cursor.close()
         conn.close()
+        
         load_data.clear()
         return full_log
+        
     except Exception as e:
         return None
 
@@ -595,7 +617,7 @@ if search_query:
                         if "Regular Order" in str(row['_order_type_key']) and row['_row_id']:
                             if start_service_treatment(row['_row_id']):
                                 # גם מעדכנים בלוג מיילים כדי שיהיה תיעוד ויזואלי למשתמש
-                                update_log_in_db(row['_order_key'], row['_sku_key'], "🛠️ סומן 'בטיפול'", row['_order_type_key'])
+                                update_log_in_db(row['_order_key'], row['_sku_key'], "🛠️ סומן 'בטיפול'", row['_order_type_key'], row_id=row['_row_id'])
                                 success_count += 1
                     
                     if success_count > 0:
@@ -615,3 +637,4 @@ if search_query:
             
     else:
         st.warning(f"לא נמצאו תוצאות עבור: {clean_text_query}")
+
