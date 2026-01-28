@@ -97,15 +97,44 @@ def get_db_connection():
     )
 
 # -------------------------------------------
+# 📝 פונקציה לעדכון סטטוס "בטיפול" (חדש)
+# -------------------------------------------
+def start_service_treatment(order_id):
+    """
+    מעדכן את תאריך תחילת הטיפול (service_start_date) להיום
+    עבור הזמנה רגילה בטבלת orders
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # מעדכן את התאריך להיום (CURRENT_DATE)
+        query = "UPDATE orders SET service_start_date = CURRENT_DATE WHERE id = %s"
+        cur.execute(query, (order_id,))
+        
+        conn.commit()
+        cur.close()
+        load_data.clear() # ניקוי מטמון כדי שהשינוי ישתקף אם נרצה
+        return True
+    except Exception as e:
+        st.error(f"שגיאה בעדכון טיפול: {e}")
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+# -------------------------------------------
 # 📥 טעינת נתונים (עם תרגום לעברית)
 # -------------------------------------------
 @st.cache_data
 def load_data():
     conn = get_db_connection()
     # שליפה מ-all_orders_view כולל delivery_time ו-notes
+    # הוספנו כאן את id לשליפה!
     query = """
         SELECT 
-            order_num, customer_name, phone, city, street, house_num, 
+            id, order_num, customer_name, phone, city, street, house_num, 
             sku, quantity, shipping_num, order_date, message_log, order_type, delivery_time, notes
         FROM all_orders_view
     """
@@ -339,6 +368,21 @@ if search_query:
 
         display_rows = []
         for index, row in filtered_df.iterrows():
+            
+            # ---------------------------------------------
+            #  תוספת כפתור "בטיפול" (הזמנות רגילות בלבד)
+            # ---------------------------------------------
+            if "Regular Order" in str(row.get('סוג הזמנה', '')) and row.get('id'):
+                col_srv_btn, _ = st.columns([1, 6])
+                with col_srv_btn:
+                    # שימוש במפתח ייחודי לפי ID כדי שהכפתור יעבוד לכל שורה בנפרד
+                    if st.button("🛠️ בטיפול", key=f"btn_serv_{row['id']}"):
+                        if start_service_treatment(row['id']):
+                            st.toast("✅ עודכן סטטוס 'בטיפול'!", icon="👨‍🔧")
+                            time.sleep(1)
+                            st.rerun()
+            # ---------------------------------------------
+
             order_num = str(row['מספר הזמנה']).strip()
             qty = format_quantity(row['כמות'])
             date_val = format_date_il(row['תאריך'])
