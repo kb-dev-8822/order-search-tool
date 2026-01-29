@@ -163,13 +163,10 @@ def update_log_in_db(order_num, sku, message, order_type_val="Regular Order", ro
         new_entry = f"{message} ({timestamp})"
         
         # בניית תנאי השליפה והעדכון (WHERE)
-        # אם יש ID - נשתמש בו כי הוא הכי מדויק
         if row_id:
             condition_sql = "WHERE id = %s"
             params_select = (row_id,)
-            params_update = (full_log_placeholder, row_id) # נבנה את זה בהמשך
         else:
-            # אחרת, נעבוד בשיטה הישנה (לפי הזמנה ומוצר)
             condition_sql = "WHERE order_num = %s AND sku = %s"
             params_select = (str(order_num), str(sku))
         
@@ -202,6 +199,8 @@ def update_log_in_db(order_num, sku, message, order_type_val="Regular Order", ro
         return full_log
         
     except Exception as e:
+        # הדפסת השגיאה לקונסול כדי שנוכל לראות אם משהו נכשל בעתיד
+        print(f"Error updating log: {e}") 
         return None
 
 # --- פונקציות עזר וניקוי ---
@@ -637,4 +636,5 @@ if search_query:
             
     else:
         st.warning(f"לא נמצאו תוצאות עבור: {clean_text_query}")
+
 
