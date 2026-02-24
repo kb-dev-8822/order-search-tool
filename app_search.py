@@ -85,6 +85,8 @@ LOG_COLUMN_NAME = "לוג מיילים"
 EMAIL_ACE = st.secrets["suppliers"].get("ace_email") if "suppliers" in st.secrets else None
 EMAIL_PAYNGO = st.secrets["suppliers"].get("payngo_email") if "suppliers" in st.secrets else None
 EMAIL_KSP = st.secrets["suppliers"].get("ksp_email", "sapak@ksp.co.il") if "suppliers" in st.secrets else "sapak@ksp.co.il"
+EMAIL_LASTPRICE = st.secrets["suppliers"].get("lastprice_email", "hen@lastprice.co.il") if "suppliers" in st.secrets else "hen@lastprice.co.il"
+
 # כתובת המתקין
 EMAIL_INSTALLER = st.secrets["suppliers"].get("installer_email", "meir22101@gmail.com") if "suppliers" in st.secrets else "meir22101@gmail.com"
 
@@ -291,12 +293,11 @@ def open_update_dialog(rows_df):
         else:
             emails_sent = 0
             
-            # 1. פיצול לשורות עם משלוח ושורות ללא משלוח
             mask_has_tracking = rows_df['_real_tracking'].apply(lambda x: True if (x and str(x).strip().lower() not in ['none', '', 'nan']) else False)
             df_shipping = rows_df[mask_has_tracking]
             df_installer = rows_df[~mask_has_tracking]
             
-            # 2. שליחה לחברת שליחויות
+            # שליחה לחברת שליחויות
             if not df_shipping.empty:
                 trackings = list(set([str(t).strip() for t in df_shipping['_real_tracking']]))
                 subj = ", ".join(trackings)
@@ -305,7 +306,7 @@ def open_update_dialog(rows_df):
                     for _, r in df_shipping.iterrows():
                         update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח עדכון פרטים", r['_order_type_key'])
 
-            # 3. שליחה למתקין
+            # שליחה למתקין
             if not df_installer.empty:
                 orders = list(set([str(o).strip() for o in df_installer['מספר הזמנה']]))
                 subj = ", ".join(orders)
@@ -320,6 +321,31 @@ def open_update_dialog(rows_df):
                 st.rerun()
             else:
                 st.error("לא נשלח (אולי שגיאה בחיבור)")
+
+# --- Dialog Function for Manual Supplier Email ---
+@st.dialog("📧 שליחה לספק ידני (לא זוהה ספק)")
+def open_manual_supplier_dialog(rows_df):
+    st.write("לא זוהה ספק אוטומטי עבור ההזמנות שנבחרו.")
+    st.write("אנא הזן כתובת מייל ידנית לשליחת הודעת 'אין מענה':")
+    target_email = st.text_input("כתובת מייל לספק")
+    
+    if st.button("שלח הודעה"):
+        if not target_email or "@" not in target_email:
+            st.error("אנא הזן כתובת מייל תקינה")
+        else:
+            u_orders = ", ".join(rows_df['מספר הזמנה'].unique())
+            u_tracking = ", ".join([t for t in rows_df['סטטוס משלוח'].unique() if t and t!="התקנה"]) or "ללא מס' משלוח"
+            u_phones = ", ".join(rows_df['טלפון'].unique())
+            
+            subj = f"{u_orders} {u_tracking} - אין מענה מהלקוח - האם יש מספר טלפון אחר?"
+            body = f"הטלפון שיש לנו כרגע הוא: {u_phones}\nנא בדקו אם יש מספר אחר."
+            
+            if send_custom_email(subj, body, target_email):
+                st.success(f"נשלח ל-{target_email}")
+                for _, r in rows_df.iterrows():
+                    update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח ספק (ידני)", r['_order_type_key'])
+                time.sleep(1.5)
+                st.rerun()
 
 # ==========================================
 # 🖥️ ממשק משתמש
@@ -653,12 +679,13 @@ if search_query:
                 else:
                      open_update_dialog(rows_for_action)
 
-        # 7. ספקים (PO / 9 / 31)
+        # 7. ספקים (PO / 9 / 31 / 32)
         with col_mail_supplier:
             if not show_bulk_warning and st.button("📞 אין מענה"):
                 ace_g = rows_for_action[rows_for_action['מספר הזמנה'].astype(str).str.upper().str.startswith("PO")]
                 pay_g = rows_for_action[rows_for_action['מספר הזמנה'].astype(str).str.startswith("9")]
                 ksp_g = rows_for_action[(rows_for_action['מספר הזמנה'].astype(str).str.startswith("31")) & (rows_for_action['מספר הזמנה'].astype(str).str.len() == 8)]
+                lp_g = rows_for_action[(rows_for_action['מספר הזמנה'].astype(str).str.startswith("32")) & (rows_for_action['מספר הזמנה'].astype(str).str.len() == 7)]
 
                 found_supplier = False
                 
@@ -697,8 +724,22 @@ if search_query:
                     if send_custom_email(subj, body, EMAIL_KSP):
                         st.toast("נשלח ל-KSP")
                         for _, r in ksp_g.iterrows(): update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח ספק (אין מענה)", r['_order_type_key'])
+
+                # Last Price
+                if not lp_g.empty and EMAIL_LASTPRICE:
+                    found_supplier = True
+                    u_orders = ", ".join(lp_g['מספר הזמנה'].unique())
+                    u_tracking = ", ".join([t for t in lp_g['סטטוס משלוח'].unique() if t and t!="התקנה"]) or "ללא מס' משלוח"
+                    u_phones = ", ".join(lp_g['טלפון'].unique())
+                    subj = f"{u_orders} {u_tracking} - אין מענה מהלקוח - האם יש מספר טלפון אחר?"
+                    body = f"הטלפון שיש לנו כרגע הוא: {u_phones}\nנא בדקו אם יש מספר אחר."
+                    if send_custom_email(subj, body, EMAIL_LASTPRICE):
+                        st.toast("נשלח ל-Last Price")
+                        for _, r in lp_g.iterrows(): update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח ספק (אין מענה)", r['_order_type_key'])
                 
-                if not found_supplier: st.toast("⚠️ לא זוהו הזמנות ספקים תואמות")
+                # אם לא נמצא ספק -> פתח דיאלוג ידני
+                if not found_supplier: 
+                    open_manual_supplier_dialog(rows_for_action)
                 else: 
                     time.sleep(1)
                     st.rerun()
