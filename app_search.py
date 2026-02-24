@@ -81,11 +81,12 @@ SQL_TO_APP_COLS = {
 }
 
 LOG_COLUMN_NAME = "לוג מיילים"
-# שליפת אימיילים מה-Secrets עם ערך ברירת מחדל במידת הצורך
+# שליפת אימיילים
 EMAIL_ACE = st.secrets["suppliers"].get("ace_email") if "suppliers" in st.secrets else None
 EMAIL_PAYNGO = st.secrets["suppliers"].get("payngo_email") if "suppliers" in st.secrets else None
-# כאן השינוי: מנסה למשוך מהסודות, אם אין - משתמש בכתובת שנתת כברירת מחדל
 EMAIL_KSP = st.secrets["suppliers"].get("ksp_email", "sapak@ksp.co.il") if "suppliers" in st.secrets else "sapak@ksp.co.il"
+# כתובת המתקין
+EMAIL_INSTALLER = st.secrets["suppliers"].get("installer_email", "meir22101@gmail.com") if "suppliers" in st.secrets else "meir22101@gmail.com"
 
 INSTALLATION_PHONE = st.secrets["ultramsg"].get("installation_phone", "0528448382") if "ultramsg" in st.secrets else "0528448382"
 
@@ -103,10 +104,6 @@ def get_db_connection():
 # 📝 פונקציה לעדכון סטטוס "בטיפול"
 # -------------------------------------------
 def start_service_treatment(order_id):
-    """
-    מעדכן את תאריך תחילת הטיפול (service_start_date) להיום
-    עבור הזמנה רגילה בטבלת orders
-    """
     conn = None
     try:
         conn = get_db_connection()
@@ -146,14 +143,13 @@ def load_data():
     return df
 
 # -------------------------------------------
-# 📝 עדכון לוג (SQL UPDATE חכם - תומך גם ב-ID)
+# 📝 עדכון לוג
 # -------------------------------------------
 def update_log_in_db(order_num, sku, message, order_type_val="Regular Order", row_id=None):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # זיהוי הטבלה
         if "Pre-Order" in str(order_type_val):
             target_table = "pre_orders"
         elif "Pickup" in str(order_type_val):
@@ -166,7 +162,6 @@ def update_log_in_db(order_num, sku, message, order_type_val="Regular Order", ro
         timestamp = datetime.now().strftime("%d/%m %H:%M")
         new_entry = f"{message} ({timestamp})"
         
-        # בניית תנאי השליפה והעדכון (WHERE)
         if row_id:
             condition_sql = "WHERE id = %s"
             params_select = (row_id,)
@@ -174,19 +169,16 @@ def update_log_in_db(order_num, sku, message, order_type_val="Regular Order", ro
             condition_sql = "WHERE order_num = %s AND sku = %s"
             params_select = (str(order_num), str(sku))
         
-        # 1. שליפת לוג קיים
         select_sql = f"SELECT message_log FROM {target_table} {condition_sql}"
         cursor.execute(select_sql, params_select)
         result = cursor.fetchone()
         current_log = result[0] if result and result[0] else ""
         
-        # 2. שרשור
         if current_log:
             full_log = f"{current_log} | {new_entry}"
         else:
             full_log = new_entry
             
-        # 3. עדכון בטבלה הנכונה
         update_sql = f"UPDATE {target_table} SET message_log = %s {condition_sql}"
         
         if row_id:
@@ -195,19 +187,15 @@ def update_log_in_db(order_num, sku, message, order_type_val="Regular Order", ro
             cursor.execute(update_sql, (full_log, str(order_num), str(sku)))
             
         conn.commit()
-        
         cursor.close()
         conn.close()
-        
         load_data.clear()
         return full_log
-        
     except Exception as e:
-        # הדפסת השגיאה לקונסול כדי שנוכל לראות אם משהו נכשל בעתיד
         print(f"Error updating log: {e}") 
         return None
 
-# --- פונקציות עזר וניקוי ---
+# --- פונקציות עזר ---
 def normalize_phone(phone_input):
     if not phone_input: return ""
     clean_digits = ''.join(filter(str.isdigit, str(phone_input)))
@@ -292,31 +280,37 @@ def send_custom_email(subject_line, body_text="", target_email=None):
         return False
 
 # --- Dialog Function for Updating Details ---
-@st.dialog("עדכון פרטים לחברת המשלוחים")
+@st.dialog("עדכון פרטים")
 def open_update_dialog(rows_df):
-    st.write("אנא הזן את פרטי העדכון (כתובת חדשה, טלפון, הוראות לשליח וכו'):")
-    user_input = st.text_area("פירוט הבקשה", height=100)
+    st.write("הזן את המלל שיישלח בגוף המייל:")
+    user_input = st.text_area("תוכן ההודעה", height=100)
     
-    if st.button("שלח עדכון"):
+    if st.button("שלח"):
         if not user_input.strip():
             st.error("חובה להזין תוכן להודעה")
         else:
-            tn_list = [t for t in rows_df['סטטוס משלוח'].unique() if t and t != "התקנה" and t != "איסוף" and t != "חלקי חילוף"]
-            if not tn_list:
-                st.error("לא נמצאו מספרי משלוח תקניים לעדכון")
+            # איסוף מספרי משלוח אמיתיים (ללא סינון איסוף/חלקי חילוף)
+            real_trackings = [str(t).strip() for t in rows_df['_real_tracking'] if t and str(t).strip().lower() not in ['none', '', 'nan']]
+            
+            # לוגיקה: אם יש משלוח -> שולחים רגיל. אם אין -> שולחים למתקין
+            if real_trackings:
+                # יש מספרי משלוח
+                unique_trackings = list(set(real_trackings))
+                subj = ", ".join(unique_trackings) # נושא: רק המספרים
+                target = None # ברירת מחדל (חברת שליחויות)
             else:
-                tn_list = list(set(tn_list))
-                joined_nums = ", ".join(tn_list)
-                subj = f"עדכון פרטים עבור מספר משלוח {joined_nums}"
-                body = f"היי,\nלקוח מבקש לעדכן את הפרטים הבאים:\n\n{user_input}\n\nתודה."
-                
-                if send_custom_email(subj, body):
-                    st.success("הבקשה נשלחה בהצלחה!")
-                    for _, r in rows_df.iterrows():
-                        if r['סטטוס משלוח'] in tn_list:
-                            update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח עדכון משלוח", r['_order_type_key'])
-                    time.sleep(1.5)
-                    st.rerun()
+                # אין מספרי משלוח -> התקנה
+                unique_orders = list(rows_df['מספר הזמנה'].unique())
+                subj = ", ".join(unique_orders) # נושא: מספרי הזמנה
+                target = EMAIL_INSTALLER # מייל למתקין
+
+            # שליחה
+            if send_custom_email(subj, user_input, target_email=target):
+                st.success("הבקשה נשלחה בהצלחה!")
+                for _, r in rows_df.iterrows():
+                    update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח עדכון פרטים", r['_order_type_key'])
+                time.sleep(1.5)
+                st.rerun()
 
 # ==========================================
 # 🖥️ ממשק משתמש
@@ -424,9 +418,11 @@ if search_query:
             else:
                 display_delivery_text = "עד 10-14 ימי עסקים"
 
-            raw_tracking_val = str(row['סטטוס משלוח']).strip() # Keep original for Text Line
+            # שמירת המספר המקורי ללוגיקה
+            raw_tracking_val = str(row['סטטוס משלוח']).strip() 
             tracking = raw_tracking_val 
             
+            # לוגיקת תצוגה (לטבלה בלבד)
             if not tracking or tracking == "None":
                 if any(x in order_type_raw for x in ["Pre-Order", "Pickup", "Spare Part"]):
                     tracking = "" 
@@ -441,7 +437,7 @@ if search_query:
             log_val = str(row.get(LOG_COLUMN_NAME, ""))
             first_name = full_name.split()[0] if full_name else ""
             
-            # Use raw_tracking_val in the text line if it exists and is different from the display 'tracking'
+            # טקסט להעתקה - מציג מספר משלוח אם קיים, גם באיסוף/חלקים
             text_line_tracking = tracking
             if raw_tracking_val and raw_tracking_val != "None" and tracking in ["איסוף", "חלקי חילוף"]:
                 text_line_tracking = raw_tracking_val
@@ -469,7 +465,8 @@ if search_query:
                 "_order_key": order_num,
                 "_sku_key": sku,
                 "_order_type_key": order_type_raw,
-                "_row_id": row.get('id')
+                "_row_id": row.get('id'),
+                "_real_tracking": raw_tracking_val # המספר האמיתי ללוגיקת כפתורים
             })
         
         display_df = pd.DataFrame(display_rows)
@@ -573,40 +570,56 @@ if search_query:
                         time.sleep(1)
                         st.rerun()
 
-        # 4. מייל סטטוס
+        # 4. מייל סטטוס (מעודכן עם לוגיקה חכמה)
         with col_mail_status:
             if not show_bulk_warning and st.button("❓ מה קורה?"):
-                tn_list = [t for t in rows_for_action['סטטוס משלוח'].unique() if t and t != "התקנה" and t != "איסוף" and t != "חלקי חילוף"]
+                # בדיקת כפילויות
                 duplicate_alert = False
                 for _, r in rows_for_action.iterrows():
                      if "נשלח בדיקה" in str(r[LOG_COLUMN_NAME]): duplicate_alert = True
                 if duplicate_alert:
                      st.toast("⚠️ שים לב: כבר נשלח בעבר")
                      time.sleep(1)
-                if not tn_list: st.toast("⚠️ אין מספרי משלוח")
+                
+                # שליפת מספרי משלוח אמיתיים
+                real_trackings = [str(t).strip() for t in rows_for_action['_real_tracking'] if t and str(t).strip().lower() not in ['none', '', 'nan']]
+                
+                if real_trackings:
+                    # יש מספרי משלוח -> למייל הרגיל
+                    unique_trackings = list(set(real_trackings))
+                    subj = f"{', '.join(unique_trackings)} מה קורה עם זה בבקשה?" if len(unique_trackings)==1 else f"{', '.join(unique_trackings)} מה קורה עם אלה בבקשה?"
+                    target = None
                 else:
-                    tn_list = list(set(tn_list))
-                    joined_nums = ", ".join(tn_list)
-                    subj = f"{joined_nums} מה קורה עם זה בבקשה?" if len(tn_list)==1 else f"{joined_nums} מה קורה עם אלה בבקשה?"
-                    if send_custom_email(subj):
-                        st.success(f"נשלח: {subj}")
-                        for _, r in rows_for_action.iterrows():
-                            if r['סטטוס משלוח'] in tn_list:
-                                update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח בדיקה", r['_order_type_key'])
-                        time.sleep(1)
-                        st.rerun()
+                    # אין מספרי משלוח -> למתקין
+                    unique_orders = list(rows_for_action['מספר הזמנה'].unique())
+                    subj = f"{', '.join(unique_orders)} מה קורה עם זה בבקשה?"
+                    target = EMAIL_INSTALLER
+                
+                if send_custom_email(subj, target_email=target):
+                    st.success(f"נשלח: {subj}")
+                    for _, r in rows_for_action.iterrows():
+                        update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח בדיקה", r['_order_type_key'])
+                    time.sleep(1)
+                    st.rerun()
 
-        # 5. מייל החזרה
+        # 5. מייל החזרה (מעודכן עם לוגיקה חכמה)
         with col_mail_return:
             if not show_bulk_warning and st.button("↩️ להחזיר"):
-                tn_list = [t for t in rows_for_action['סטטוס משלוח'].unique() if t and t != "התקנה" and t != "איסוף" and t != "חלקי חילוף"]
-                if not tn_list: st.toast("⚠️ אין מספרי משלוח")
+                real_trackings = [str(t).strip() for t in rows_for_action['_real_tracking'] if t and str(t).strip().lower() not in ['none', '', 'nan']]
+                
+                if real_trackings:
+                    # יש משלוח -> רגיל
+                    unique_trackings = list(set(real_trackings))
+                    subj = f"{', '.join(unique_trackings)} להחזיר אלינו בבקשה"
+                    target = None
                 else:
-                    tn_list = list(set(tn_list))
-                    joined_nums = ", ".join(tn_list)
-                    subj = f"{joined_nums} להחזיר אלינו בבקשה"
-                    if send_custom_email(subj):
-                        st.success(f"נשלח: {subj}")
+                    # אין משלוח -> מתקין
+                    unique_orders = list(rows_for_action['מספר הזמנה'].unique())
+                    subj = f"{', '.join(unique_orders)} להחזיר אלינו בבקשה"
+                    target = EMAIL_INSTALLER
+
+                if send_custom_email(subj, target_email=target):
+                    st.success(f"נשלח: {subj}")
 
         # 6. כפתור חדש - עדכון משלוח (פותח חלון)
         with col_mail_update:
@@ -675,14 +688,13 @@ if search_query:
                         # בודקים אם זו הזמנה רגילה שיש לה ID
                         if "Regular Order" in str(row['_order_type_key']) and row['_row_id']:
                             if start_service_treatment(row['_row_id']):
-                                # גם מעדכנים בלוג מיילים כדי שיהיה תיעוד ויזואלי למשתמש
                                 update_log_in_db(row['_order_key'], row['_sku_key'], "🛠️ סומן 'בטיפול'", row['_order_type_key'], row_id=row['_row_id'])
                                 success_count += 1
                     
                     if success_count > 0:
                         st.toast(f"✅ {success_count} הזמנות עברו לסטטוס 'בטיפול'!", icon="👨‍🔧")
                         time.sleep(1)
-                        load_data.clear() # חובה לנקות זיכרון כדי שהשינוי יופיע
+                        load_data.clear() 
                         st.rerun()
                     else:
                         st.toast("⚠️ לא נבחרו הזמנות רגילות לטיפול", icon="🛑")
