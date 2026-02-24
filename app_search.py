@@ -279,7 +279,7 @@ def send_custom_email(subject_line, body_text="", target_email=None):
         st.error(f"שגיאה בשליחת מייל: {e}")
         return False
 
-# --- Dialog Function for Updating Details ---
+# --- Dialog Function for Updating Details (מפוצל) ---
 @st.dialog("עדכון פרטים")
 def open_update_dialog(rows_df):
     st.write("הזן את המלל שיישלח בגוף המייל:")
@@ -289,28 +289,37 @@ def open_update_dialog(rows_df):
         if not user_input.strip():
             st.error("חובה להזין תוכן להודעה")
         else:
-            # איסוף מספרי משלוח אמיתיים (ללא סינון איסוף/חלקי חילוף)
-            real_trackings = [str(t).strip() for t in rows_df['_real_tracking'] if t and str(t).strip().lower() not in ['none', '', 'nan']]
+            emails_sent = 0
             
-            # לוגיקה: אם יש משלוח -> שולחים רגיל. אם אין -> שולחים למתקין
-            if real_trackings:
-                # יש מספרי משלוח
-                unique_trackings = list(set(real_trackings))
-                subj = ", ".join(unique_trackings) # נושא: רק המספרים
-                target = None # ברירת מחדל (חברת שליחויות)
-            else:
-                # אין מספרי משלוח -> התקנה
-                unique_orders = list(rows_df['מספר הזמנה'].unique())
-                subj = ", ".join(unique_orders) # נושא: מספרי הזמנה
-                target = EMAIL_INSTALLER # מייל למתקין
+            # 1. פיצול לשורות עם משלוח ושורות ללא משלוח
+            mask_has_tracking = rows_df['_real_tracking'].apply(lambda x: True if (x and str(x).strip().lower() not in ['none', '', 'nan']) else False)
+            df_shipping = rows_df[mask_has_tracking]
+            df_installer = rows_df[~mask_has_tracking]
+            
+            # 2. שליחה לחברת שליחויות
+            if not df_shipping.empty:
+                trackings = list(set([str(t).strip() for t in df_shipping['_real_tracking']]))
+                subj = ", ".join(trackings)
+                if send_custom_email(subj, user_input, target_email=None):
+                    emails_sent += 1
+                    for _, r in df_shipping.iterrows():
+                        update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח עדכון פרטים", r['_order_type_key'])
 
-            # שליחה
-            if send_custom_email(subj, user_input, target_email=target):
+            # 3. שליחה למתקין
+            if not df_installer.empty:
+                orders = list(set([str(o).strip() for o in df_installer['מספר הזמנה']]))
+                subj = ", ".join(orders)
+                if send_custom_email(subj, user_input, target_email=EMAIL_INSTALLER):
+                    emails_sent += 1
+                    for _, r in df_installer.iterrows():
+                        update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח עדכון למתקין", r['_order_type_key'])
+            
+            if emails_sent > 0:
                 st.success("הבקשה נשלחה בהצלחה!")
-                for _, r in rows_df.iterrows():
-                    update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח עדכון פרטים", r['_order_type_key'])
                 time.sleep(1.5)
                 st.rerun()
+            else:
+                st.error("לא נשלח (אולי שגיאה בחיבור)")
 
 # ==========================================
 # 🖥️ ממשק משתמש
@@ -570,7 +579,7 @@ if search_query:
                         time.sleep(1)
                         st.rerun()
 
-        # 4. מייל סטטוס (מעודכן עם לוגיקה חכמה)
+        # 4. מייל סטטוס (מפוצל חכם)
         with col_mail_status:
             if not show_bulk_warning and st.button("❓ מה קורה?"):
                 # בדיקת כפילויות
@@ -581,47 +590,63 @@ if search_query:
                      st.toast("⚠️ שים לב: כבר נשלח בעבר")
                      time.sleep(1)
                 
-                # שליפת מספרי משלוח אמיתיים
-                real_trackings = [str(t).strip() for t in rows_for_action['_real_tracking'] if t and str(t).strip().lower() not in ['none', '', 'nan']]
+                emails_sent = 0
                 
-                if real_trackings:
-                    # יש מספרי משלוח -> למייל הרגיל
-                    unique_trackings = list(set(real_trackings))
-                    subj = f"{', '.join(unique_trackings)} מה קורה עם זה בבקשה?" if len(unique_trackings)==1 else f"{', '.join(unique_trackings)} מה קורה עם אלה בבקשה?"
-                    target = None
-                else:
-                    # אין מספרי משלוח -> למתקין
-                    unique_orders = list(rows_for_action['מספר הזמנה'].unique())
-                    subj = f"{', '.join(unique_orders)} מה קורה עם זה בבקשה?"
-                    target = EMAIL_INSTALLER
+                # 1. יצירת מסכה לזיהוי שורות עם משלוח
+                mask_has_tracking = rows_for_action['_real_tracking'].apply(lambda x: True if (x and str(x).strip().lower() not in ['none', '', 'nan']) else False)
+                df_shipping = rows_for_action[mask_has_tracking]
+                df_installer = rows_for_action[~mask_has_tracking]
                 
-                if send_custom_email(subj, target_email=target):
-                    st.success(f"נשלח: {subj}")
-                    for _, r in rows_for_action.iterrows():
-                        update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח בדיקה", r['_order_type_key'])
+                # 2. טיפול במשלוחים (שליחה לחברת שליחויות)
+                if not df_shipping.empty:
+                    trackings = list(set([str(t).strip() for t in df_shipping['_real_tracking']]))
+                    subj = f"{', '.join(trackings)} מה קורה עם זה בבקשה?" if len(trackings)==1 else f"{', '.join(trackings)} מה קורה עם אלה בבקשה?"
+                    if send_custom_email(subj, target_email=None): # None = default mail
+                        emails_sent += 1
+                        for _, r in df_shipping.iterrows():
+                            update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח בדיקה", r['_order_type_key'])
+                
+                # 3. טיפול בהתקנות (שליחה למתקין)
+                if not df_installer.empty:
+                    orders = list(set([str(o).strip() for o in df_installer['מספר הזמנה']]))
+                    subj = f"{', '.join(orders)} מה קורה עם זה בבקשה?"
+                    if send_custom_email(subj, target_email=EMAIL_INSTALLER):
+                        emails_sent += 1
+                        for _, r in df_installer.iterrows():
+                            update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח בדיקה למתקין", r['_order_type_key'])
+
+                if emails_sent > 0:
+                    st.success(f"נשלחו {emails_sent} מיילים")
                     time.sleep(1)
                     st.rerun()
 
-        # 5. מייל החזרה (מעודכן עם לוגיקה חכמה)
+        # 5. מייל החזרה (מפוצל חכם)
         with col_mail_return:
             if not show_bulk_warning and st.button("↩️ להחזיר"):
-                real_trackings = [str(t).strip() for t in rows_for_action['_real_tracking'] if t and str(t).strip().lower() not in ['none', '', 'nan']]
+                emails_sent = 0
                 
-                if real_trackings:
-                    # יש משלוח -> רגיל
-                    unique_trackings = list(set(real_trackings))
-                    subj = f"{', '.join(unique_trackings)} להחזיר אלינו בבקשה"
-                    target = None
-                else:
-                    # אין משלוח -> מתקין
-                    unique_orders = list(rows_for_action['מספר הזמנה'].unique())
-                    subj = f"{', '.join(unique_orders)} להחזיר אלינו בבקשה"
-                    target = EMAIL_INSTALLER
+                mask_has_tracking = rows_for_action['_real_tracking'].apply(lambda x: True if (x and str(x).strip().lower() not in ['none', '', 'nan']) else False)
+                df_shipping = rows_for_action[mask_has_tracking]
+                df_installer = rows_for_action[~mask_has_tracking]
+                
+                # משלוחים
+                if not df_shipping.empty:
+                    trackings = list(set([str(t).strip() for t in df_shipping['_real_tracking']]))
+                    subj = f"{', '.join(trackings)} להחזיר אלינו בבקשה"
+                    if send_custom_email(subj, target_email=None):
+                        emails_sent += 1
+                
+                # מתקין
+                if not df_installer.empty:
+                    orders = list(set([str(o).strip() for o in df_installer['מספר הזמנה']]))
+                    subj = f"{', '.join(orders)} להחזיר אלינו בבקשה"
+                    if send_custom_email(subj, target_email=EMAIL_INSTALLER):
+                        emails_sent += 1
 
-                if send_custom_email(subj, target_email=target):
-                    st.success(f"נשלח: {subj}")
+                if emails_sent > 0:
+                    st.success(f"נשלחו {emails_sent} בקשות החזרה")
 
-        # 6. כפתור חדש - עדכון משלוח (פותח חלון)
+        # 6. כפתור עדכון משלוח (פותח חלון)
         with col_mail_update:
             if not show_bulk_warning and st.button("📝 עדכון פרטים"):
                 if rows_for_action.empty: st.toast("⚠️ לא נבחרו שורות")
