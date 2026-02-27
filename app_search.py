@@ -152,12 +152,15 @@ def update_log_in_db(order_num, sku, message, order_type_val="Regular Order", ro
         conn = get_db_connection()
         cursor = conn.cursor()
         
+        # === תיקון: זיהוי הטבלה החדשה ===
         if "Pre-Order" in str(order_type_val):
             target_table = "pre_orders"
         elif "Pickup" in str(order_type_val):
              target_table = "pickups"
         elif "Spare Part" in str(order_type_val):
              target_table = "spare_parts"
+        elif "Double Delivery" in str(order_type_val): # <--- הוספנו את זה
+             target_table = "double_deliveries"
         else:
             target_table = "orders"
         
@@ -445,6 +448,8 @@ if search_query:
                 display_delivery_text = "" 
             elif "Spare Part" in order_type_raw:
                 display_delivery_text = "עד 10 ימי עסקים"
+            elif "Double Delivery" in order_type_raw: # <--- חדש
+                display_delivery_text = "אספקה ואיסוף (עד 14 ימי עסקים)"
             elif "Pre-Order" in order_type_raw:
                 if delivery_time_raw and delivery_time_raw.lower() != 'none':
                     display_delivery_text = f"עד {delivery_time_raw} ימי עסקים"
@@ -459,22 +464,26 @@ if search_query:
             
             # לוגיקת תצוגה (לטבלה בלבד)
             if not tracking or tracking == "None":
-                if any(x in order_type_raw for x in ["Pre-Order", "Pickup", "Spare Part"]):
+                # הוספנו את Double Delivery לרשימה של דברים שאין להם "התקנה" כברירת מחדל
+                if any(x in order_type_raw for x in ["Pre-Order", "Pickup", "Spare Part", "Double Delivery"]):
                     tracking = "" 
                 else:
                     tracking = "התקנה"
             
+            # תגיות יפות לטבלה
             if "Pickup" in order_type_raw:
                 tracking = "איסוף"
             elif "Spare Part" in order_type_raw:
                 tracking = "חלקי חילוף"
+            elif "Double Delivery" in order_type_raw: # <--- חדש
+                tracking = "משלוח כפול"
 
             log_val = str(row.get(LOG_COLUMN_NAME, ""))
             first_name = full_name.split()[0] if full_name else ""
             
             # טקסט להעתקה - מציג מספר משלוח אם קיים, גם באיסוף/חלקים
             text_line_tracking = tracking
-            if raw_tracking_val and raw_tracking_val != "None" and tracking in ["איסוף", "חלקי חילוף"]:
+            if raw_tracking_val and raw_tracking_val != "None" and tracking in ["איסוף", "חלקי חילוף", "משלוח כפול"]:
                 text_line_tracking = raw_tracking_val
 
             base_text_line = f"פרטי הזמנה: מספר הזמנה: {order_num}, כמות: {qty}, מק\"ט: {sku}, שם: {full_name}, כתובת: {address_display}, טלפון: {phone_display}, מספר משלוח: {text_line_tracking}, תאריך: {date_val}, זמן אספקה: {display_delivery_text}"
@@ -774,3 +783,4 @@ if search_query:
             
     else:
         st.warning(f"לא נמצאו תוצאות עבור: {clean_text_query}")
+
