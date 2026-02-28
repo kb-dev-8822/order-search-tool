@@ -350,6 +350,70 @@ def open_manual_supplier_dialog(rows_df):
                 time.sleep(1.5)
                 st.rerun()
 
+# --- Dialog Function for Refund (זיכוי ללקוח) ---
+@st.dialog("💸 בקשת זיכוי ללקוח")
+def open_refund_dialog(rows_df):
+    st.write("הזן את סיבת הזיכוי (המלל יתווסף למספר ההזמנה והמק\"ט בנושא ובגוף המייל):")
+    user_input = st.text_area("פרטי הזיכוי", height=100)
+    
+    # בדוק מראש אם יש ספק מזוהה כדי להציג התראה במידת הצורך
+    ace_g = rows_df[rows_df['מספר הזמנה'].astype(str).str.upper().str.startswith("PO")]
+    pay_g = rows_df[rows_df['מספר הזמנה'].astype(str).str.startswith("9")]
+    ksp_g = rows_df[(rows_df['מספר הזמנה'].astype(str).str.startswith("31")) & (rows_df['מספר הזמנה'].astype(str).str.len() == 8)]
+    lp_g = rows_df[(rows_df['מספר הזמנה'].astype(str).str.startswith("32")) & (rows_df['מספר הזמנה'].astype(str).str.len() == 7)]
+    
+    has_auto_supplier = not (ace_g.empty and pay_g.empty and ksp_g.empty and lp_g.empty)
+    
+    manual_email = ""
+    if not has_auto_supplier:
+        st.warning("לא זוהה ספק אוטומטי (למשל אייס או מחסני חשמל). אנא הזן כתובת מייל ידנית לשליחה:")
+        manual_email = st.text_input("כתובת מייל לספק")
+        
+    if st.button("שלח בקשת זיכוי"):
+        if not user_input.strip():
+            st.error("חובה להזין פרטים עבור הזיכוי")
+            return
+            
+        if not has_auto_supplier and (not manual_email or "@" not in manual_email):
+            st.error("אנא הזן כתובת מייל תקינה לספק")
+            return
+
+        emails_sent = 0
+        
+        def send_refund_to_supplier(df_group, email_address, supplier_name):
+            if df_group.empty or not email_address: return False
+            u_orders = " ".join(df_group['מספר הזמנה'].astype(str).unique())
+            u_skus = " ".join(df_group['מוצר'].astype(str).unique())
+            # הדרישה: נושא וגוף זהים. מס' הזמנה -> רווח -> מק"ט -> רווח -> המלל.
+            text_to_send = f"{u_orders} {u_skus} {user_input.strip()}"
+            
+            if send_custom_email(text_to_send, text_to_send, email_address):
+                st.toast(f"בקשת הזיכוי נשלחה ל-{supplier_name} ✅")
+                for _, r in df_group.iterrows(): 
+                    update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלחה בקשת זיכוי לספק", r['_order_type_key'])
+                return True
+            return False
+
+        if has_auto_supplier:
+            if send_refund_to_supplier(ace_g, EMAIL_ACE, "אייס"): emails_sent+=1
+            if send_refund_to_supplier(pay_g, EMAIL_PAYNGO, "מחסני חשמל"): emails_sent+=1
+            if send_refund_to_supplier(ksp_g, EMAIL_KSP, "KSP"): emails_sent+=1
+            if send_refund_to_supplier(lp_g, EMAIL_LASTPRICE, "Last Price"): emails_sent+=1
+        else:
+            u_orders = " ".join(rows_df['מספר הזמנה'].astype(str).unique())
+            u_skus = " ".join(rows_df['מוצר'].astype(str).unique())
+            text_to_send = f"{u_orders} {u_skus} {user_input.strip()}"
+            
+            if send_custom_email(text_to_send, text_to_send, manual_email):
+                st.toast(f"בקשת הזיכוי נשלחה ל-{manual_email} ✅")
+                for _, r in rows_df.iterrows(): 
+                    update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלחה בקשת זיכוי (ידני)", r['_order_type_key'])
+                emails_sent+=1
+
+        if emails_sent > 0:
+            time.sleep(1.5)
+            st.rerun()
+
 # ==========================================
 # 🖥️ ממשק משתמש
 # ==========================================
@@ -538,8 +602,8 @@ if search_query:
         is_implicit_select_all = selected_indices.empty
         show_bulk_warning = (is_implicit_select_all and len(rows_for_action) > 10)
 
-        # --- כפתורים (עכשיו 8 כפתורים בשורה) ---
-        col_wa_policy, col_wa_contact, col_wa_install, col_mail_status, col_mail_return, col_mail_update, col_mail_supplier, col_service = st.columns(8, gap="small")
+        # --- כפתורים (עכשיו 9 כפתורים בשורה) ---
+        col_wa_policy, col_wa_contact, col_wa_install, col_mail_status, col_mail_return, col_mail_update, col_mail_supplier, col_refund, col_service = st.columns(9, gap="small")
         
         # 1. מדיניות
         with col_wa_policy:
@@ -753,7 +817,15 @@ if search_query:
                     time.sleep(1)
                     st.rerun()
 
-        # 8. 🛠️ כפתור חדש - "בטיפול" (מרוכז)
+        # 8. 💸 כפתור חדש - זיכוי ללקוח
+        with col_refund:
+            if not show_bulk_warning and st.button("💸 זיכוי"):
+                if rows_for_action.empty: 
+                    st.toast("⚠️ לא נבחרו שורות")
+                else:
+                    open_refund_dialog(rows_for_action)
+
+        # 9. 🛠️ כפתור "בטיפול" (מרוכז)
         with col_service:
             if not show_bulk_warning and st.button("🛠️ בטיפול"):
                 if rows_for_action.empty: st.toast("⚠️ לא נבחרו הזמנות")
@@ -783,4 +855,3 @@ if search_query:
             
     else:
         st.warning(f"לא נמצאו תוצאות עבור: {clean_text_query}")
-
