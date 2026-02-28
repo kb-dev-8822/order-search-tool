@@ -602,9 +602,9 @@ if search_query:
         is_implicit_select_all = selected_indices.empty
         show_bulk_warning = (is_implicit_select_all and len(rows_for_action) > 10)
 
-        # --- כפתורים (חלוקה חכמה עם Popovers) ---
+# --- כפתורים (חלוקה חכמה עם Popovers) ---
         st.markdown("<br>", unsafe_allow_html=True)
-        col_wa, col_mail, col_system = st.columns(3, gap="medium")
+        col_wa, col_delivery, col_supplier, col_system = st.columns(4, gap="small")
         
         # 1. עמודת וואטסאפ (תפריט נפתח)
         with col_wa:
@@ -679,9 +679,9 @@ if search_query:
                             time.sleep(1)
                             st.rerun()
 
-        # 2. עמודת ספקים ומיילים (תפריט נפתח)
-        with col_mail:
-            with st.popover("📧 פעולות ספקים (מיילים)", use_container_width=True):
+        # 2. עמודת חברת שליחויות (תפריט נפתח)
+        with col_delivery:
+            with st.popover("📦 פעולות ח' שליחויות (מיילים)", use_container_width=True):
                 # מה קורה?
                 if not show_bulk_warning and st.button("❓ מה קורה?", use_container_width=True):
                     duplicate_alert = False
@@ -745,6 +745,9 @@ if search_query:
                     else:
                          open_update_dialog(rows_for_action)
 
+        # 3. עמודת ספקים (תפריט נפתח)
+        with col_supplier:
+            with st.popover("📧 פעולות ספקים (מיילים)", use_container_width=True):
                 # אין מענה
                 if not show_bulk_warning and st.button("📞 אין מענה", use_container_width=True):
                     ace_g = rows_for_action[rows_for_action['מספר הזמנה'].astype(str).str.upper().str.startswith("PO")]
@@ -810,7 +813,7 @@ if search_query:
                     else:
                         open_refund_dialog(rows_for_action)
 
-        # 3. עמודת מערכת (כפתור רגיל בולט)
+        # 4. עמודת מערכת (כפתור רגיל בולט)
         with col_system:
             if not show_bulk_warning and st.button("🛠️ סמן 'בטיפול'", use_container_width=True):
                 if rows_for_action.empty: st.toast("⚠️ לא נבחרו הזמנות")
@@ -839,4 +842,5 @@ if search_query:
             
     else:
         st.warning(f"לא נמצאו תוצאות עבור: {clean_text_query}")
+
 
