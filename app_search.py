@@ -602,21 +602,24 @@ if search_query:
         is_implicit_select_all = selected_indices.empty
         show_bulk_warning = (is_implicit_select_all and len(rows_for_action) > 10)
 
-        # --- כפתורים (עכשיו 9 כפתורים בשורה) ---
-        col_wa_policy, col_wa_contact, col_wa_install, col_mail_status, col_mail_return, col_mail_update, col_mail_supplier, col_refund, col_service = st.columns(9, gap="small")
+        # --- כפתורים (חלוקה חכמה עם Popovers) ---
+        st.markdown("<br>", unsafe_allow_html=True)
+        col_wa, col_mail, col_system = st.columns(3, gap="medium")
         
-        # 1. מדיניות
-        with col_wa_policy:
-            if not show_bulk_warning and st.button("💬 שלח מדיניות"):
-                if rows_for_action.empty: st.toast("⚠️ אין נתונים")
-                else:
-                    count = 0
-                    for phone, group in rows_for_action.groupby('_raw_phone'):
-                        if not phone: continue
-                        orders_str = ", ".join(group['מספר הזמנה'].unique())
-                        skus_str = ", ".join(group['מוצר'].unique())
-                        client_name = group.iloc[0]['שם לקוח'].split()[0] if group.iloc[0]['שם לקוח'] else "לקוח"
-                        msg_body = f"""שלום {client_name},
+        # 1. עמודת וואטסאפ (תפריט נפתח)
+        with col_wa:
+            with st.popover("💬 פעולות וואטסאפ (לקוח/מתקין)", use_container_width=True):
+                # מדיניות
+                if not show_bulk_warning and st.button("💬 שלח מדיניות", use_container_width=True):
+                    if rows_for_action.empty: st.toast("⚠️ אין נתונים")
+                    else:
+                        count = 0
+                        for phone, group in rows_for_action.groupby('_raw_phone'):
+                            if not phone: continue
+                            orders_str = ", ".join(group['מספר הזמנה'].unique())
+                            skus_str = ", ".join(group['מוצר'].unique())
+                            client_name = group.iloc[0]['שם לקוח'].split()[0] if group.iloc[0]['שם לקוח'] else "לקוח"
+                            msg_body = f"""שלום {client_name},
 מדברים לגבי הזמנה/ות: {orders_str}.
 מוצרים: {skus_str}.
 הבנתי שיש בעיה במוצר/ים (פגם או חוסר בחלקים) או שאתה פשוט מעוניין להחזיר.
@@ -625,214 +628,195 @@ if search_query:
 2. אם זה *מוצר פגום* - אנא שלח לנו תמונות ברורות של הפגמים, ונציג מטעמנו יחזור אליך לגבי המשך הטיפול (עד 3 ימי עסקים).
 3. במידה ו*חסרים חלקים* - נא לשלוח לנו את מספרי החלקים החסרים במדויק לפי דף ההוראות (מופיע בחוברת ההרכבה), ונדאג להשלים לך אותם.
 תודה!"""
-                        if send_whatsapp_message(phone, msg_body):
-                            count += 1
-                            for _, r in group.iterrows():
-                                update_log_in_db(r['_order_key'], r['_sku_key'], "💬 נשלח ווצאפ מדיניות", r['_order_type_key'])
-                            st.toast(f"נשלח ל-{client_name} ✅")
-                    if count > 0:
-                        time.sleep(1)
-                        st.rerun()
+                            if send_whatsapp_message(phone, msg_body):
+                                count += 1
+                                for _, r in group.iterrows():
+                                    update_log_in_db(r['_order_key'], r['_sku_key'], "💬 נשלח ווצאפ מדיניות", r['_order_type_key'])
+                                st.toast(f"נשלח ל-{client_name} ✅")
+                        if count > 0:
+                            time.sleep(1)
+                            st.rerun()
 
-        # 2. חזרנו אליך
-        with col_wa_contact:
-            if not show_bulk_warning and st.button("📞 חזרנו אליך"):
-                if rows_for_action.empty: st.toast("⚠️ אין נתונים")
-                else:
-                    count = 0
-                    for phone, group in rows_for_action.groupby('_raw_phone'):
-                        if not phone: continue
-                        orders_str = ", ".join(group['מספר הזמנה'].unique())
-                        skus_str = ", ".join(group['מוצר'].unique())
-                        tracking_str = ", ".join(group['סטטוס משלוח'].unique())
-                        client_name = group.iloc[0]['שם לקוח'].split()[0]
-                        msg_body = f"""היי {client_name},
+                # חזרנו אליך
+                if not show_bulk_warning and st.button("📞 חזרנו אליך", use_container_width=True):
+                    if rows_for_action.empty: st.toast("⚠️ אין נתונים")
+                    else:
+                        count = 0
+                        for phone, group in rows_for_action.groupby('_raw_phone'):
+                            if not phone: continue
+                            orders_str = ", ".join(group['מספר הזמנה'].unique())
+                            skus_str = ", ".join(group['מוצר'].unique())
+                            tracking_str = ", ".join(group['סטטוס משלוח'].unique())
+                            client_name = group.iloc[0]['שם לקוח'].split()[0]
+                            msg_body = f"""היי {client_name},
 חוזרים אלייך מסלימפרייס לגבי הזמנה/ות: {orders_str}
 מוצרים: {skus_str}
 מס משלוח/ים: {tracking_str}
 קיבלנו פנייה שחיפשת אותנו, איך אפשר לעזור?"""
-                        if send_whatsapp_message(phone, msg_body):
-                            count += 1
-                            for _, r in group.iterrows():
-                                update_log_in_db(r['_order_key'], r['_sku_key'], "💬 נשלח 'חזרנו אליך'", r['_order_type_key'])
-                            st.toast(f"נשלח ל-{client_name} ✅")
-                    if count > 0:
+                            if send_whatsapp_message(phone, msg_body):
+                                count += 1
+                                for _, r in group.iterrows():
+                                    update_log_in_db(r['_order_key'], r['_sku_key'], "💬 נשלח 'חזרנו אליך'", r['_order_type_key'])
+                                st.toast(f"נשלח ל-{client_name} ✅")
+                        if count > 0:
+                            time.sleep(1)
+                            st.rerun()
+
+                # התקנה
+                if not show_bulk_warning and st.button("🔧 התקנה", use_container_width=True):
+                    if rows_for_action.empty: st.toast("⚠️ אין נתונים")
+                    else:
+                        all_msgs = []
+                        for order_num, group in rows_for_action.groupby('מספר הזמנה'):
+                            r = group.iloc[0]
+                            items = ", ".join([f"{row['כמות']} X {row['מוצר']}" for _, row in group.iterrows()])
+                            line = f"{order_num} | {items} | {r['שם לקוח']} | {r['כתובת מלאה']} | {r['טלפון']} | התקנה"
+                            all_msgs.append(line)
+                        if send_whatsapp_message(INSTALLATION_PHONE, "\n\n".join(all_msgs)):
+                            st.toast("נשלח למחסני חשמל")
+                            for _, r in rows_for_action.iterrows():
+                                 update_log_in_db(r['_order_key'], r['_sku_key'], "💬 נשלח למתקין", r['_order_type_key'])
+                            time.sleep(1)
+                            st.rerun()
+
+        # 2. עמודת ספקים ומיילים (תפריט נפתח)
+        with col_mail:
+            with st.popover("📧 פעולות ספקים (מיילים)", use_container_width=True):
+                # מה קורה?
+                if not show_bulk_warning and st.button("❓ מה קורה?", use_container_width=True):
+                    duplicate_alert = False
+                    for _, r in rows_for_action.iterrows():
+                         if "נשלח בדיקה" in str(r[LOG_COLUMN_NAME]): duplicate_alert = True
+                    if duplicate_alert:
+                         st.toast("⚠️ שים לב: כבר נשלח בעבר")
+                         time.sleep(1)
+                    
+                    emails_sent = 0
+                    mask_has_tracking = rows_for_action['_real_tracking'].apply(lambda x: True if (x and str(x).strip().lower() not in ['none', '', 'nan']) else False)
+                    df_shipping = rows_for_action[mask_has_tracking]
+                    df_installer = rows_for_action[~mask_has_tracking]
+                    
+                    if not df_shipping.empty:
+                        trackings = list(set([str(t).strip() for t in df_shipping['_real_tracking']]))
+                        subj = f"{', '.join(trackings)} מה קורה עם זה בבקשה?" if len(trackings)==1 else f"{', '.join(trackings)} מה קורה עם אלה בבקשה?"
+                        if send_custom_email(subj, target_email=None):
+                            emails_sent += 1
+                            for _, r in df_shipping.iterrows():
+                                update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח בדיקה", r['_order_type_key'])
+                    
+                    if not df_installer.empty:
+                        orders = list(set([str(o).strip() for o in df_installer['מספר הזמנה']]))
+                        subj = f"{', '.join(orders)} מה קורה עם זה בבקשה?"
+                        if send_custom_email(subj, target_email=EMAIL_INSTALLER):
+                            emails_sent += 1
+                            for _, r in df_installer.iterrows():
+                                update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח בדיקה למתקין", r['_order_type_key'])
+
+                    if emails_sent > 0:
+                        st.success(f"נשלחו {emails_sent} מיילים")
                         time.sleep(1)
                         st.rerun()
 
-        # 3. התקנה
-        with col_wa_install:
-            if not show_bulk_warning and st.button("🔧 התקנה"):
-                if rows_for_action.empty: st.toast("⚠️ אין נתונים")
-                else:
-                    all_msgs = []
-                    for order_num, group in rows_for_action.groupby('מספר הזמנה'):
-                        r = group.iloc[0]
-                        items = ", ".join([f"{row['כמות']} X {row['מוצר']}" for _, row in group.iterrows()])
-                        line = f"{order_num} | {items} | {r['שם לקוח']} | {r['כתובת מלאה']} | {r['טלפון']} | התקנה"
-                        all_msgs.append(line)
-                    if send_whatsapp_message(INSTALLATION_PHONE, "\n\n".join(all_msgs)):
-                        st.toast("נשלח למחסני חשמל")
-                        for _, r in rows_for_action.iterrows():
-                             update_log_in_db(r['_order_key'], r['_sku_key'], "💬 נשלח למתקין", r['_order_type_key'])
+                # להחזיר
+                if not show_bulk_warning and st.button("↩️ להחזיר", use_container_width=True):
+                    emails_sent = 0
+                    mask_has_tracking = rows_for_action['_real_tracking'].apply(lambda x: True if (x and str(x).strip().lower() not in ['none', '', 'nan']) else False)
+                    df_shipping = rows_for_action[mask_has_tracking]
+                    df_installer = rows_for_action[~mask_has_tracking]
+                    
+                    if not df_shipping.empty:
+                        trackings = list(set([str(t).strip() for t in df_shipping['_real_tracking']]))
+                        subj = f"{', '.join(trackings)} להחזיר אלינו בבקשה"
+                        if send_custom_email(subj, target_email=None):
+                            emails_sent += 1
+                    
+                    if not df_installer.empty:
+                        orders = list(set([str(o).strip() for o in df_installer['מספר הזמנה']]))
+                        subj = f"{', '.join(orders)} להחזיר אלינו בבקשה"
+                        if send_custom_email(subj, target_email=EMAIL_INSTALLER):
+                            emails_sent += 1
+
+                    if emails_sent > 0:
+                        st.success(f"נשלחו {emails_sent} בקשות החזרה")
+
+                # עדכון פרטים
+                if not show_bulk_warning and st.button("📝 עדכון פרטים", use_container_width=True):
+                    if rows_for_action.empty: st.toast("⚠️ לא נבחרו שורות")
+                    else:
+                         open_update_dialog(rows_for_action)
+
+                # אין מענה
+                if not show_bulk_warning and st.button("📞 אין מענה", use_container_width=True):
+                    ace_g = rows_for_action[rows_for_action['מספר הזמנה'].astype(str).str.upper().str.startswith("PO")]
+                    pay_g = rows_for_action[rows_for_action['מספר הזמנה'].astype(str).str.startswith("9")]
+                    ksp_g = rows_for_action[(rows_for_action['מספר הזמנה'].astype(str).str.startswith("31")) & (rows_for_action['מספר הזמנה'].astype(str).str.len() == 8)]
+                    lp_g = rows_for_action[(rows_for_action['מספר הזמנה'].astype(str).str.startswith("32")) & (rows_for_action['מספר הזמנה'].astype(str).str.len() == 7)]
+
+                    found_supplier = False
+                    if not ace_g.empty and EMAIL_ACE:
+                        found_supplier = True
+                        u_orders = ", ".join(ace_g['מספר הזמנה'].unique())
+                        u_tracking = ", ".join([t for t in ace_g['סטטוס משלוח'].unique() if t and t!="התקנה"]) or "ללא מס' משלוח"
+                        u_phones = ", ".join(ace_g['טלפון'].unique())
+                        subj = f"{u_orders} {u_tracking} - אין מענה מהלקוח - האם יש מספר טלפון אחר?"
+                        body = f"הטלפון שיש לנו כרגע הוא: {u_phones}\nנא בדקו אם יש מספר אחר."
+                        if send_custom_email(subj, body, EMAIL_ACE):
+                            st.toast("נשלח לאייס")
+                            for _, r in ace_g.iterrows(): update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח ספק (אין מענה)", r['_order_type_key'])
+                    
+                    if not pay_g.empty and EMAIL_PAYNGO:
+                        found_supplier = True
+                        u_orders = ", ".join(pay_g['מספר הזמנה'].unique())
+                        u_tracking = ", ".join([t for t in pay_g['סטטוס משלוח'].unique() if t and t!="התקנה"]) or "ללא מס' משלוח"
+                        u_phones = ", ".join(pay_g['טלפון'].unique())
+                        subj = f"{u_orders} {u_tracking} - אין מענה מהלקוח - האם יש מספר טלפון אחר?"
+                        body = f"הטלפון שיש לנו כרגע הוא: {u_phones}\nנא בדקו אם יש מספר אחר."
+                        if send_custom_email(subj, body, EMAIL_PAYNGO):
+                            st.toast("נשלח למחסני חשמל")
+                            for _, r in pay_g.iterrows(): update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח ספק (אין מענה)", r['_order_type_key'])
+
+                    if not ksp_g.empty and EMAIL_KSP:
+                        found_supplier = True
+                        u_orders = ", ".join(ksp_g['מספר הזמנה'].unique())
+                        u_tracking = ", ".join([t for t in ksp_g['סטטוס משלוח'].unique() if t and t!="התקנה"]) or "ללא מס' משלוח"
+                        u_phones = ", ".join(ksp_g['טלפון'].unique())
+                        subj = f"{u_orders} {u_tracking} - אין מענה מהלקוח - האם יש מספר טלפון אחר?"
+                        body = f"הטלפון שיש לנו כרגע הוא: {u_phones}\nנא בדקו אם יש מספר אחר."
+                        if send_custom_email(subj, body, EMAIL_KSP):
+                            st.toast("נשלח ל-KSP")
+                            for _, r in ksp_g.iterrows(): update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח ספק (אין מענה)", r['_order_type_key'])
+
+                    if not lp_g.empty and EMAIL_LASTPRICE:
+                        found_supplier = True
+                        u_orders = ", ".join(lp_g['מספר הזמנה'].unique())
+                        u_tracking = ", ".join([t for t in lp_g['סטטוס משלוח'].unique() if t and t!="התקנה"]) or "ללא מס' משלוח"
+                        u_phones = ", ".join(lp_g['טלפון'].unique())
+                        subj = f"{u_orders} {u_tracking} - אין מענה מהלקוח - האם יש מספר טלפון אחר?"
+                        body = f"הטלפון שיש לנו כרגע הוא: {u_phones}\nנא בדקו אם יש מספר אחר."
+                        if send_custom_email(subj, body, EMAIL_LASTPRICE):
+                            st.toast("נשלח ל-Last Price")
+                            for _, r in lp_g.iterrows(): update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח ספק (אין מענה)", r['_order_type_key'])
+                    
+                    if not found_supplier: 
+                        open_manual_supplier_dialog(rows_for_action)
+                    else: 
                         time.sleep(1)
                         st.rerun()
 
-        # 4. מייל סטטוס (מפוצל חכם)
-        with col_mail_status:
-            if not show_bulk_warning and st.button("❓ מה קורה?"):
-                # בדיקת כפילויות
-                duplicate_alert = False
-                for _, r in rows_for_action.iterrows():
-                     if "נשלח בדיקה" in str(r[LOG_COLUMN_NAME]): duplicate_alert = True
-                if duplicate_alert:
-                     st.toast("⚠️ שים לב: כבר נשלח בעבר")
-                     time.sleep(1)
-                
-                emails_sent = 0
-                
-                # 1. יצירת מסכה לזיהוי שורות עם משלוח
-                mask_has_tracking = rows_for_action['_real_tracking'].apply(lambda x: True if (x and str(x).strip().lower() not in ['none', '', 'nan']) else False)
-                df_shipping = rows_for_action[mask_has_tracking]
-                df_installer = rows_for_action[~mask_has_tracking]
-                
-                # 2. טיפול במשלוחים (שליחה לחברת שליחויות)
-                if not df_shipping.empty:
-                    trackings = list(set([str(t).strip() for t in df_shipping['_real_tracking']]))
-                    subj = f"{', '.join(trackings)} מה קורה עם זה בבקשה?" if len(trackings)==1 else f"{', '.join(trackings)} מה קורה עם אלה בבקשה?"
-                    if send_custom_email(subj, target_email=None): # None = default mail
-                        emails_sent += 1
-                        for _, r in df_shipping.iterrows():
-                            update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח בדיקה", r['_order_type_key'])
-                
-                # 3. טיפול בהתקנות (שליחה למתקין)
-                if not df_installer.empty:
-                    orders = list(set([str(o).strip() for o in df_installer['מספר הזמנה']]))
-                    subj = f"{', '.join(orders)} מה קורה עם זה בבקשה?"
-                    if send_custom_email(subj, target_email=EMAIL_INSTALLER):
-                        emails_sent += 1
-                        for _, r in df_installer.iterrows():
-                            update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח בדיקה למתקין", r['_order_type_key'])
+                # זיכוי
+                if not show_bulk_warning and st.button("💸 זיכוי", use_container_width=True):
+                    if rows_for_action.empty: 
+                        st.toast("⚠️ לא נבחרו שורות")
+                    else:
+                        open_refund_dialog(rows_for_action)
 
-                if emails_sent > 0:
-                    st.success(f"נשלחו {emails_sent} מיילים")
-                    time.sleep(1)
-                    st.rerun()
-
-        # 5. מייל החזרה (מפוצל חכם)
-        with col_mail_return:
-            if not show_bulk_warning and st.button("↩️ להחזיר"):
-                emails_sent = 0
-                
-                mask_has_tracking = rows_for_action['_real_tracking'].apply(lambda x: True if (x and str(x).strip().lower() not in ['none', '', 'nan']) else False)
-                df_shipping = rows_for_action[mask_has_tracking]
-                df_installer = rows_for_action[~mask_has_tracking]
-                
-                # משלוחים
-                if not df_shipping.empty:
-                    trackings = list(set([str(t).strip() for t in df_shipping['_real_tracking']]))
-                    subj = f"{', '.join(trackings)} להחזיר אלינו בבקשה"
-                    if send_custom_email(subj, target_email=None):
-                        emails_sent += 1
-                
-                # מתקין
-                if not df_installer.empty:
-                    orders = list(set([str(o).strip() for o in df_installer['מספר הזמנה']]))
-                    subj = f"{', '.join(orders)} להחזיר אלינו בבקשה"
-                    if send_custom_email(subj, target_email=EMAIL_INSTALLER):
-                        emails_sent += 1
-
-                if emails_sent > 0:
-                    st.success(f"נשלחו {emails_sent} בקשות החזרה")
-
-        # 6. כפתור עדכון משלוח (פותח חלון)
-        with col_mail_update:
-            if not show_bulk_warning and st.button("📝 עדכון פרטים"):
-                if rows_for_action.empty: st.toast("⚠️ לא נבחרו שורות")
-                else:
-                     open_update_dialog(rows_for_action)
-
-        # 7. ספקים (PO / 9 / 31 / 32)
-        with col_mail_supplier:
-            if not show_bulk_warning and st.button("📞 אין מענה"):
-                ace_g = rows_for_action[rows_for_action['מספר הזמנה'].astype(str).str.upper().str.startswith("PO")]
-                pay_g = rows_for_action[rows_for_action['מספר הזמנה'].astype(str).str.startswith("9")]
-                ksp_g = rows_for_action[(rows_for_action['מספר הזמנה'].astype(str).str.startswith("31")) & (rows_for_action['מספר הזמנה'].astype(str).str.len() == 8)]
-                lp_g = rows_for_action[(rows_for_action['מספר הזמנה'].astype(str).str.startswith("32")) & (rows_for_action['מספר הזמנה'].astype(str).str.len() == 7)]
-
-                found_supplier = False
-                
-                # ACE
-                if not ace_g.empty and EMAIL_ACE:
-                    found_supplier = True
-                    u_orders = ", ".join(ace_g['מספר הזמנה'].unique())
-                    u_tracking = ", ".join([t for t in ace_g['סטטוס משלוח'].unique() if t and t!="התקנה"]) or "ללא מס' משלוח"
-                    u_phones = ", ".join(ace_g['טלפון'].unique())
-                    subj = f"{u_orders} {u_tracking} - אין מענה מהלקוח - האם יש מספר טלפון אחר?"
-                    body = f"הטלפון שיש לנו כרגע הוא: {u_phones}\nנא בדקו אם יש מספר אחר."
-                    if send_custom_email(subj, body, EMAIL_ACE):
-                        st.toast("נשלח לאייס")
-                        for _, r in ace_g.iterrows(): update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח ספק (אין מענה)", r['_order_type_key'])
-                
-                # Payngo
-                if not pay_g.empty and EMAIL_PAYNGO:
-                    found_supplier = True
-                    u_orders = ", ".join(pay_g['מספר הזמנה'].unique())
-                    u_tracking = ", ".join([t for t in pay_g['סטטוס משלוח'].unique() if t and t!="התקנה"]) or "ללא מס' משלוח"
-                    u_phones = ", ".join(pay_g['טלפון'].unique())
-                    subj = f"{u_orders} {u_tracking} - אין מענה מהלקוח - האם יש מספר טלפון אחר?"
-                    body = f"הטלפון שיש לנו כרגע הוא: {u_phones}\nנא בדקו אם יש מספר אחר."
-                    if send_custom_email(subj, body, EMAIL_PAYNGO):
-                        st.toast("נשלח למחסני חשמל")
-                        for _, r in pay_g.iterrows(): update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח ספק (אין מענה)", r['_order_type_key'])
-
-                # KSP
-                if not ksp_g.empty and EMAIL_KSP:
-                    found_supplier = True
-                    u_orders = ", ".join(ksp_g['מספר הזמנה'].unique())
-                    u_tracking = ", ".join([t for t in ksp_g['סטטוס משלוח'].unique() if t and t!="התקנה"]) or "ללא מס' משלוח"
-                    u_phones = ", ".join(ksp_g['טלפון'].unique())
-                    subj = f"{u_orders} {u_tracking} - אין מענה מהלקוח - האם יש מספר טלפון אחר?"
-                    body = f"הטלפון שיש לנו כרגע הוא: {u_phones}\nנא בדקו אם יש מספר אחר."
-                    if send_custom_email(subj, body, EMAIL_KSP):
-                        st.toast("נשלח ל-KSP")
-                        for _, r in ksp_g.iterrows(): update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח ספק (אין מענה)", r['_order_type_key'])
-
-                # Last Price
-                if not lp_g.empty and EMAIL_LASTPRICE:
-                    found_supplier = True
-                    u_orders = ", ".join(lp_g['מספר הזמנה'].unique())
-                    u_tracking = ", ".join([t for t in lp_g['סטטוס משלוח'].unique() if t and t!="התקנה"]) or "ללא מס' משלוח"
-                    u_phones = ", ".join(lp_g['טלפון'].unique())
-                    subj = f"{u_orders} {u_tracking} - אין מענה מהלקוח - האם יש מספר טלפון אחר?"
-                    body = f"הטלפון שיש לנו כרגע הוא: {u_phones}\nנא בדקו אם יש מספר אחר."
-                    if send_custom_email(subj, body, EMAIL_LASTPRICE):
-                        st.toast("נשלח ל-Last Price")
-                        for _, r in lp_g.iterrows(): update_log_in_db(r['_order_key'], r['_sku_key'], "📧 נשלח ספק (אין מענה)", r['_order_type_key'])
-                
-                # אם לא נמצא ספק -> פתח דיאלוג ידני
-                if not found_supplier: 
-                    open_manual_supplier_dialog(rows_for_action)
-                else: 
-                    time.sleep(1)
-                    st.rerun()
-
-        # 8. 💸 כפתור חדש - זיכוי ללקוח
-        with col_refund:
-            if not show_bulk_warning and st.button("💸 זיכוי"):
-                if rows_for_action.empty: 
-                    st.toast("⚠️ לא נבחרו שורות")
-                else:
-                    open_refund_dialog(rows_for_action)
-
-        # 9. 🛠️ כפתור "בטיפול" (מרוכז)
-        with col_service:
-            if not show_bulk_warning and st.button("🛠️ בטיפול"):
+        # 3. עמודת מערכת (כפתור רגיל בולט)
+        with col_system:
+            if not show_bulk_warning and st.button("🛠️ סמן 'בטיפול'", use_container_width=True):
                 if rows_for_action.empty: st.toast("⚠️ לא נבחרו הזמנות")
                 else:
                     success_count = 0
                     for index, row in rows_for_action.iterrows():
-                        # בודקים אם זו הזמנה רגילה שיש לה ID
                         if "Regular Order" in str(row['_order_type_key']) and row['_row_id']:
                             if start_service_treatment(row['_row_id']):
                                 update_log_in_db(row['_order_key'], row['_sku_key'], "🛠️ סומן 'בטיפול'", row['_order_type_key'], row_id=row['_row_id'])
@@ -855,3 +839,4 @@ if search_query:
             
     else:
         st.warning(f"לא נמצאו תוצאות עבור: {clean_text_query}")
+
