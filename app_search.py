@@ -840,10 +840,9 @@ if search_query:
                     if rows_for_action.empty: st.toast("⚠️ לא נבחרו הזמנות")
                     else:
                         success_count = 0
-                        today_str = datetime.now().strftime("%d/%m/%Y")
                         for index, row in rows_for_action.iterrows():
                             if "Regular Order" in str(row['_order_type_key']) and row['_row_id']:
-                                update_log_in_db(row['_order_key'], row['_sku_key'], f"💸 עבר לזיכוי {today_str}", row['_order_type_key'], row_id=row['_row_id'])
+                                update_log_in_db(row['_order_key'], row['_sku_key'], "💸 עבר לזיכוי", row['_order_type_key'], row_id=row['_row_id'])
                                 success_count += 1
 
                         if success_count > 0:
