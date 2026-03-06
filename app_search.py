@@ -813,25 +813,46 @@ if search_query:
                     else:
                         open_refund_dialog(rows_for_action)
 
-        # 4. עמודת מערכת (כפתור רגיל בולט)
+        # 4. עמודת פעולות שירות (תפריט נפתח)
         with col_system:
-            if not show_bulk_warning and st.button("🛠️ סמן 'בטיפול'", use_container_width=True):
-                if rows_for_action.empty: st.toast("⚠️ לא נבחרו הזמנות")
-                else:
-                    success_count = 0
-                    for index, row in rows_for_action.iterrows():
-                        if "Regular Order" in str(row['_order_type_key']) and row['_row_id']:
-                            if start_service_treatment(row['_row_id']):
-                                update_log_in_db(row['_order_key'], row['_sku_key'], "🛠️ סומן 'בטיפול'", row['_order_type_key'], row_id=row['_row_id'])
-                                success_count += 1
-                    
-                    if success_count > 0:
-                        st.toast(f"✅ {success_count} הזמנות עברו לסטטוס 'בטיפול'!", icon="👨‍🔧")
-                        time.sleep(1)
-                        load_data.clear() 
-                        st.rerun()
+            with st.popover("🛠️ פעולות שירות", use_container_width=True):
+                # בטיפול
+                if not show_bulk_warning and st.button("🛠️ בטיפול", use_container_width=True):
+                    if rows_for_action.empty: st.toast("⚠️ לא נבחרו הזמנות")
                     else:
-                        st.toast("⚠️ לא נבחרו הזמנות רגילות לטיפול", icon="🛑")
+                        success_count = 0
+                        for index, row in rows_for_action.iterrows():
+                            if "Regular Order" in str(row['_order_type_key']) and row['_row_id']:
+                                if start_service_treatment(row['_row_id']):
+                                    update_log_in_db(row['_order_key'], row['_sku_key'], "🛠️ סומן 'בטיפול'", row['_order_type_key'], row_id=row['_row_id'])
+                                    success_count += 1
+
+                        if success_count > 0:
+                            st.toast(f"✅ {success_count} הזמנות עברו לסטטוס 'בטיפול'!", icon="👨‍🔧")
+                            time.sleep(1)
+                            load_data.clear()
+                            st.rerun()
+                        else:
+                            st.toast("⚠️ לא נבחרו הזמנות רגילות לטיפול", icon="🛑")
+
+                # עבר לזיכוי
+                if not show_bulk_warning and st.button("💸 עבר לזיכוי", use_container_width=True):
+                    if rows_for_action.empty: st.toast("⚠️ לא נבחרו הזמנות")
+                    else:
+                        success_count = 0
+                        today_str = datetime.now().strftime("%d/%m/%Y")
+                        for index, row in rows_for_action.iterrows():
+                            if "Regular Order" in str(row['_order_type_key']) and row['_row_id']:
+                                update_log_in_db(row['_order_key'], row['_sku_key'], f"💸 עבר לזיכוי {today_str}", row['_order_type_key'], row_id=row['_row_id'])
+                                success_count += 1
+
+                        if success_count > 0:
+                            st.toast(f"✅ {success_count} הזמנות סומנו 'עבר לזיכוי'!", icon="💸")
+                            time.sleep(1)
+                            load_data.clear()
+                            st.rerun()
+                        else:
+                            st.toast("⚠️ לא נבחרו הזמנות רגילות לזיכוי", icon="🛑")
 
         st.divider()
         if not rows_for_action.empty and not show_bulk_warning:
